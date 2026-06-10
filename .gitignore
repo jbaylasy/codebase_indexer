@@ -1,0 +1,65 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Databases and indexes
+code_index_db/
+*.db
+*.sqlite3
+
+# Benchmark / results
+results/
+benchmark_results.md
+
+# Jupyter
+.ipynb_checkpoints/
+
+# uv
+uv.lock
+
+# Markdown (except tracked docs)
+*.md
+!README.md
+!questions.md
+!HANDOFF.md
+!SESSION_NOTES*.md
+!benchmark_ground_truth.json
+
+# Test fixtures
+test_codebase/
+agent_files/
