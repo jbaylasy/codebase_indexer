@@ -1,119 +1,136 @@
 import os
+import json
 import hashlib
-import uuid
-import chromadb
+import lancedb
+import pyarrow as pa
+from code_index.embedder import embed_documents
 
 
 def init_client(db_path="./code_index_db"):
-    """Initialize a persistent ChromaDB client.
-
-    Args:
-        db_path: Path to the ChromaDB persistence directory.
-
-    Returns:
-        A chromadb.PersistentClient instance.
-    """
-    return chromadb.PersistentClient(path=db_path)
+    return lancedb.connect(db_path)
 
 
-def get_collection(client, name):
-    """Get or create a named ChromaDB collection.
-
-    Args:
-        client: A chromadb.Client instance.
-        name: The collection name.
-
-    Returns:
-        A chromadb.Collection instance.
-    """
-    return client.get_or_create_collection(name=name)
+def get_collection(db, name):
+    try:
+        return db.open_table(name)
+    except Exception:
+        schema = pa.schema([
+            pa.field("vector", pa.list_(pa.float32(), 384)),
+            pa.field("text", pa.string()),
+            pa.field("file", pa.string()),
+            pa.field("start_line", pa.int32()),
+            pa.field("type", pa.string()),
+            pa.field("name", pa.string()),
+            pa.field("file_hash", pa.string()),
+        ])
+        empty = pa.table({
+            "vector": pa.array([], type=pa.list_(pa.float32(), 384)),
+            "text": pa.array([], type=pa.string()),
+            "file": pa.array([], type=pa.string()),
+            "start_line": pa.array([], type=pa.int32()),
+            "type": pa.array([], type=pa.string()),
+            "name": pa.array([], type=pa.string()),
+            "file_hash": pa.array([], type=pa.string()),
+        }, schema=schema)
+        return db.create_table(name, empty)
 
 
 def _hash_file(file_path):
-    """Compute the MD5 hash of a file's contents.
-
-    Args:
-        file_path: Absolute path to the file.
-
-    Returns:
-        Hex digest string of the MD5 hash.
-    """
     with open(file_path, 'rb') as f:
         return hashlib.md5(f.read()).hexdigest()
 
 
-def index_codebase(chunks, collection):
-    """Add chunk data to a ChromaDB collection.
+class MerkleTree:
+    def __init__(self, root_dir):
+        self.root_dir = root_dir
+        self.file_hashes = {}
+        self.dir_hashes = {}
+        self._build(root_dir)
 
-    Each chunk's metadata is augmented with a 'file_hash' field derived from
-    the source file's MD5 digest for incremental update support.
+    def _build(self, directory):
+        entries = []
+        for entry in sorted(os.listdir(directory)):
+            full = os.path.join(directory, entry)
+            if entry.startswith("."):
+                continue
+            if os.path.isfile(full):
+                h = _hash_file(full)
+                self.file_hashes[full] = h
+                entries.append(h)
+            elif os.path.isdir(full):
+                child_hash = self._build(full)
+                entries.append(child_hash)
+        combined = "".join(entries)
+        dir_hash = hashlib.md5(combined.encode()).hexdigest()
+        self.dir_hashes[directory] = dir_hash
+        return dir_hash
 
-    Args:
-        chunks: A list of dicts with 'text' and 'metadata' keys.
-        collection: A ChromaDB collection to insert into.
-    """
+    def get_changed_files(self, old_tree_state):
+        if not old_tree_state:
+            return list(self.file_hashes.keys()), []
+        old_file_hashes = old_tree_state.get("file_hashes", {})
+        old_dir_hashes = old_tree_state.get("dir_hashes", {})
+        changed = []
+        new = []
+        if self.dir_hashes.get(self.root_dir) == old_dir_hashes.get(self.root_dir):
+            return [], []
+        for fp, fh in self.file_hashes.items():
+            if fp not in old_file_hashes:
+                new.append(fp)
+            elif old_file_hashes[fp] != fh:
+                changed.append(fp)
+        return changed, new
+
+    def to_state(self):
+        return {"file_hashes": self.file_hashes, "dir_hashes": self.dir_hashes}
+
+
+def _save_merkle_state(db_path, codebase_name, tree):
+    state_file = os.path.join(db_path, f"merkle_{codebase_name}.json")
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+    with open(state_file, "w") as f:
+        json.dump(tree.to_state(), f)
+
+
+def _load_merkle_state(db_path, codebase_name):
+    state_file = os.path.join(db_path, f"merkle_{codebase_name}.json")
+    if os.path.exists(state_file):
+        with open(state_file, "r") as f:
+            return json.load(f)
+    return None
+
+
+def index_codebase(chunks, table, db_path=None, codebase_name=None):
     if not chunks:
         return
-
-    documents = [c["text"] for c in chunks]
-    metadatas = []
-    for c in chunks:
+    texts = [c["text"] for c in chunks]
+    vectors = embed_documents(texts).tolist()
+    records = []
+    for i, c in enumerate(chunks):
         meta = dict(c["metadata"])
         file_path = meta.get("file", "")
         if file_path and os.path.exists(file_path):
-            meta["file_hash"] = _hash_file(file_path)
+            fh = _hash_file(file_path)
         else:
-            meta["file_hash"] = ""
-        metadatas.append(meta)
-    ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+            fh = ""
+        records.append({
+            "vector": vectors[i],
+            "text": texts[i],
+            "file": meta.get("file", ""),
+            "start_line": meta.get("start_line", 1),
+            "type": meta.get("type", "file"),
+            "name": meta.get("name", ""),
+            "file_hash": fh,
+        })
+    table.add(records)
+    print(f"Added {len(records)} chunks to the database.")
 
-    collection.add(
-        documents=documents,
-        metadatas=metadatas,
-        ids=ids,
-    )
-    print(f"Added {len(documents)} chunks to the database.")
 
-
-def update_codebase(root_dir, collection, chunker_fn):
-    """Incrementally update a ChromaDB collection by re-indexing only changed files.
-
-    Walks the directory, hashes each file, compares against stored hashes in
-    ChromaDB metadata, and only re-chunks files whose hash has changed. Old
-    chunks for changed files are deleted before new ones are added.
-
-    Args:
-        root_dir: The root directory to scan for source files.
-        collection: A ChromaDB collection to update.
-        chunker_fn: A callable(root_dir) that returns a list of chunk dicts.
-    """
-    current_file_hashes = {}
-    for root, dirs, files in os.walk(root_dir):
-        for d in dirs[:]:
-            if d.startswith("."):
-                dirs.remove(d)
-        for file in files:
-            full_path = os.path.join(root, file)
-            current_file_hashes[full_path] = _hash_file(full_path)
-
-    stored_hashes = {}
-    if collection.count() > 0:
-        all_meta = collection.get(include=["metadatas"])
-        for meta in all_meta["metadatas"]:
-            fp = meta.get("file", "")
-            fh = meta.get("file_hash", "")
-            if fp:
-                stored_hashes[fp] = fh
-
-    changed_files = []
-    new_files = []
-    for fp, fh in current_file_hashes.items():
-        if fp not in stored_hashes:
-            new_files.append(fp)
-        elif stored_hashes[fp] != fh:
-            changed_files.append(fp)
-
-    unchanged_skipped = len(current_file_hashes) - len(changed_files) - len(new_files)
+def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=None):
+    current_tree = MerkleTree(root_dir)
+    old_state = _load_merkle_state(db_path or "./code_index_db", codebase_name or "unknown")
+    changed_files, new_files = current_tree.get_changed_files(old_state)
+    unchanged_skipped = len(current_tree.file_hashes) - len(changed_files) - len(new_files)
 
     if not changed_files and not new_files:
         print(f"No changes detected ({unchanged_skipped} files unchanged).")
@@ -124,7 +141,7 @@ def update_codebase(root_dir, collection, chunker_fn):
     if changed_files:
         for fp in changed_files:
             try:
-                collection.delete(where={"file": fp})
+                table.delete(f'file = "{fp}"')
             except Exception:
                 pass
         print(f"Deleted old chunks for {len(changed_files)} changed files.")
@@ -137,21 +154,22 @@ def update_codebase(root_dir, collection, chunker_fn):
         new_chunks.extend(chunks)
 
     if new_chunks:
-        existing_count = collection.count()
-        documents = [c["text"] for c in new_chunks]
-        metadatas = []
-        for c in new_chunks:
+        texts = [c["text"] for c in new_chunks]
+        vectors = embed_documents(texts).tolist()
+        records = []
+        for i, c in enumerate(new_chunks):
             meta = dict(c["metadata"])
-            meta["file_hash"] = current_file_hashes.get(meta.get("file", ""), "")
-            metadatas.append(meta)
-        ids = [str(uuid.uuid4()) for _ in range(len(new_chunks))]
-
-        collection.add(
-            documents=documents,
-            metadatas=metadatas,
-            ids=ids,
-        )
+            records.append({
+                "vector": vectors[i],
+                "text": texts[i],
+                "file": meta.get("file", ""),
+                "start_line": meta.get("start_line", 1),
+                "type": meta.get("type", "file"),
+                "name": meta.get("name", ""),
+                "file_hash": current_tree.file_hashes.get(meta.get("file", ""), ""),
+            })
+        table.add(records)
         print(f"Indexed {len(new_chunks)} chunks from {len(files_to_reindex)} files "
               f"({len(new_files)} new, {len(changed_files)} changed, {unchanged_skipped} unchanged).")
-    else:
-        print(f"No chunks extracted from {len(files_to_reindex)} changed/new files.")
+
+    _save_merkle_state(db_path or "./code_index_db", codebase_name or "unknown", current_tree)

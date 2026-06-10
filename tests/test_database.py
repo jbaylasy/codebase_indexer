@@ -1,19 +1,18 @@
 import os
 import hashlib
-import chromadb
 from code_index.database import init_client, get_collection, index_codebase, update_codebase
 
 
 def test_init_client(tmp_path):
     client = init_client(str(tmp_path / "test_db"))
-    assert hasattr(client, "get_or_create_collection")
-    assert hasattr(client, "list_collections")
+    assert hasattr(client, "open_table")
+    assert hasattr(client, "table_names")
 
 
 def test_get_collection(tmp_path):
     client = init_client(str(tmp_path / "test_db"))
-    collection = get_collection(client, "test_col")
-    assert collection.name == "test_col"
+    table = get_collection(client, "test_col")
+    assert table.name == "test_col"
 
 
 def test_index_codebase_adds_chunks_with_file_hash(tmp_path):
@@ -23,8 +22,8 @@ def test_index_codebase_adds_chunks_with_file_hash(tmp_path):
         "    msg = f'Hello {name}'\n"
         "    return msg\n"
     )
-    client = init_client(str(tmp_path / "chroma"))
-    collection = get_collection(client, "test_idx")
+    client = init_client(str(tmp_path / "db"))
+    table = get_collection(client, "test_idx")
     chunks = [
         {
             "text": "def greet(name):\n    msg = f'Hello {name}'\n    return msg\n",
@@ -36,15 +35,16 @@ def test_index_codebase_adds_chunks_with_file_hash(tmp_path):
             },
         }
     ]
-    index_codebase(chunks, collection)
-    assert collection.count() == 1
-    result = collection.get(include=["metadatas"])
-    assert result["metadatas"][0]["file_hash"] != ""
+    index_codebase(chunks, table, db_path=str(tmp_path / "db"), codebase_name="test_idx")
+    assert table.count_rows() == 1
+    arrow_table = table.to_arrow()
+    file_hashes = arrow_table.column("file_hash").to_pylist()
+    assert file_hashes[0] != ""
 
 
 def test_update_codebase_detects_new_files(tmp_path):
-    client = init_client(str(tmp_path / "chroma"))
-    collection = get_collection(client, "test_update_new")
+    client = init_client(str(tmp_path / "db"))
+    table = get_collection(client, "test_update_new")
 
     new_file = tmp_path / "new_module.py"
     new_file.write_text(
@@ -53,13 +53,13 @@ def test_update_codebase_detects_new_files(tmp_path):
         "    return y\n"
     )
     from code_index.chunker import split_python_code
-    update_codebase(str(tmp_path), collection, split_python_code)
-    assert collection.count() >= 1
+    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_new")
+    assert table.count_rows() >= 1
 
 
 def test_update_codebase_detects_changed_files(tmp_path):
-    client = init_client(str(tmp_path / "chroma"))
-    collection = get_collection(client, "test_update_changed")
+    client = init_client(str(tmp_path / "db"))
+    table = get_collection(client, "test_update_changed")
 
     py_file = tmp_path / "mod.py"
     py_file.write_text(
@@ -68,24 +68,24 @@ def test_update_codebase_detects_changed_files(tmp_path):
         "    return a\n"
     )
     from code_index.chunker import split_python_code
-    update_codebase(str(tmp_path), collection, split_python_code)
-    assert collection.count() >= 1
+    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_changed")
+    assert table.count_rows() >= 1
 
     py_file.write_text(
         "def changed():\n"
         "    b = 2\n"
         "    return b\n"
     )
-    update_codebase(str(tmp_path), collection, split_python_code)
+    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_changed")
 
-    all_meta = collection.get(include=["metadatas"])
-    names = [m["name"] for m in all_meta["metadatas"]]
+    arrow_table = table.to_arrow()
+    names = arrow_table.column("name").to_pylist()
     assert "changed" in names
 
 
 def test_update_codebase_skips_unchanged(tmp_path):
-    client = init_client(str(tmp_path / "chroma"))
-    collection = get_collection(client, "test_update_skip")
+    client = init_client(str(tmp_path / "db"))
+    table = get_collection(client, "test_update_skip")
 
     py_file = tmp_path / "stable.py"
     py_file.write_text(
@@ -94,10 +94,10 @@ def test_update_codebase_skips_unchanged(tmp_path):
         "    return a\n"
     )
     from code_index.chunker import split_python_code
-    update_codebase(str(tmp_path), collection, split_python_code)
-    count_before = collection.count()
+    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_skip")
+    count_before = table.count_rows()
 
-    update_codebase(str(tmp_path), collection, split_python_code)
-    count_after = collection.count()
+    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_skip")
+    count_after = table.count_rows()
 
     assert count_before == count_after

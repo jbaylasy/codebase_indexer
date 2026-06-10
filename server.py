@@ -7,31 +7,31 @@ from code_index.embedder import warm_up, init_embedder
 
 mcp = FastMCP("code_index")
 
-_client = init_client(DB_PATH)
-_collections = {}
+_db = init_client(DB_PATH)
+_tables = {}
 init_embedder(cache_size=EMBEDDING_CACHE_SIZE)
 warm_up()
 
 
-def _get_collection(name):
-    if name not in _collections:
-        _collections[name] = get_collection(_client, name)
-    return _collections[name]
+def _get_table(name):
+    if name not in _tables:
+        _tables[name] = get_collection(_db, name)
+    return _tables[name]
 
 
 @mcp.tool()
 def index_codebase_tool(codebase_name: str, root_dir: str) -> str:
     try:
-        collection_name = f"{codebase_name}_index"
-        existing = _client.list_collections()
-        if any(c.name == collection_name for c in existing):
-            _client.delete_collection(collection_name)
-            if collection_name in _collections:
-                del _collections[collection_name]
-        collection = _get_collection(collection_name)
+        table_name = f"{codebase_name}_index"
+        existing = _db.list_tables()
+        if table_name in existing:
+            _db.drop_table(table_name)
+            if table_name in _tables:
+                del _tables[table_name]
+        table = _get_table(table_name)
         chunks = get_file_paths(root_dir)
-        index_codebase(chunks, collection)
-        return f"Indexed {collection.count()} chunks into collection '{collection_name}'."
+        index_codebase(chunks, table, db_path=DB_PATH, codebase_name=codebase_name)
+        return f"Indexed {table.count_rows()} chunks into table '{table_name}'."
     except Exception as e:
         return f"Error indexing codebase: {e}"
 
@@ -39,11 +39,11 @@ def index_codebase_tool(codebase_name: str, root_dir: str) -> str:
 @mcp.tool()
 def search_code_tool(query: str, codebase_name: str, n_results: int = 3) -> str:
     try:
-        collection_name = f"{codebase_name}_index"
-        collection = _get_collection(collection_name)
-        if collection.count() == 0:
-            return f"Collection '{collection_name}' is empty."
-        result = search_code(query, collection, n_results)
+        table_name = f"{codebase_name}_index"
+        table = _get_table(table_name)
+        if table.count_rows() == 0:
+            return f"Table '{table_name}' is empty."
+        result = search_code(query, table, n_results)
         lines = [f'Query: "{query}"', "=" * 60]
         for i, r in enumerate(result["results"]):
             lines.append(f"--- Result {i + 1} ---")
@@ -62,12 +62,11 @@ def search_code_tool(query: str, codebase_name: str, n_results: int = 3) -> str:
 @mcp.tool()
 def list_codebases() -> str:
     try:
-        collections = _client.list_collections()
+        table_names = _db.list_tables()
         results = []
-        for col_info in collections:
-            name = col_info.name
-            col = _client.get_collection(name)
-            count = col.count()
+        for name in table_names:
+            t = _db.open_table(name)
+            count = t.count_rows()
             results.append(f"{name}: {count} chunks")
         if not results:
             return "No indexed codebases found."
@@ -79,11 +78,11 @@ def list_codebases() -> str:
 @mcp.tool()
 def remove_codebase(codebase_name: str) -> str:
     try:
-        collection_name = f"{codebase_name}_index"
-        _client.delete_collection(collection_name)
-        if collection_name in _collections:
-            del _collections[collection_name]
-        return f"Removed collection '{collection_name}'."
+        table_name = f"{codebase_name}_index"
+        _db.drop_table(table_name)
+        if table_name in _tables:
+            del _tables[table_name]
+        return f"Removed table '{table_name}'."
     except Exception as e:
         return f"Error removing codebase: {e}"
 

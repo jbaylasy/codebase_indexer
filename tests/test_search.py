@@ -11,8 +11,8 @@ def _setup_collection(tmp_path):
         "        total += item['price']\n"
         "    return total\n"
     )
-    client = init_client(str(tmp_path / "chroma"))
-    collection = get_collection(client, "test_search")
+    client = init_client(str(tmp_path / "db"))
+    table = get_collection(client, "test_search")
     chunks = [
         {
             "text": (
@@ -30,22 +30,21 @@ def _setup_collection(tmp_path):
             },
         }
     ]
-    index_codebase(chunks, collection)
-    return collection
+    index_codebase(chunks, table, db_path=str(tmp_path / "db"), codebase_name="test_search")
+    return table
 
 
 def test_search_code_returns_structured_results(tmp_path):
-    collection = _setup_collection(tmp_path)
-    result = search_code("calculate total price", collection)
+    table = _setup_collection(tmp_path)
+    result = search_code("calculate total price", table)
     assert "query" in result
     assert "results" in result
-    assert "raw" in result
     assert result["query"] == "calculate total price"
 
 
 def test_search_code_result_keys(tmp_path):
-    collection = _setup_collection(tmp_path)
-    result = search_code("calculate total", collection)
+    table = _setup_collection(tmp_path)
+    result = search_code("calculate total", table)
     assert len(result["results"]) >= 1
     r = result["results"][0]
     for key in ("file", "start_line", "name", "type", "distance", "code"):
@@ -53,8 +52,8 @@ def test_search_code_result_keys(tmp_path):
 
 
 def test_format_results(tmp_path):
-    collection = _setup_collection(tmp_path)
-    result = search_code("total", collection)
+    table = _setup_collection(tmp_path)
+    result = search_code("total", table)
     formatted = format_results(result)
     assert 'Query: "total"' in formatted
     assert "--- Result 1 ---" in formatted
@@ -63,8 +62,8 @@ def test_format_results(tmp_path):
 
 
 def test_search_finds_correct_function(tmp_path):
-    collection = _setup_collection(tmp_path)
-    result = search_code("calculate total of items", collection)
+    table = _setup_collection(tmp_path)
+    result = search_code("calculate total of items", table)
     assert len(result["results"]) >= 1
     assert result["results"][0]["name"] == "calculate_total"
     assert "total" in result["results"][0]["code"]

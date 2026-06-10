@@ -5,13 +5,15 @@ description = "Semantic code search engine with MCP server, file watcher, and be
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "chromadb>=1.5.9",
+    "lancedb>=0.21.0",
     "mcp[cli]>=1.27.2",
     "numpy>=2.4.6",
     "scikit-learn>=1.9.0",
     "sentence-transformers>=5.5.1",
     "watchdog>=6.0.0",
     "python-dotenv>=1.0.0",
+    "pyarrow>=18.0.0",
+    "pylance>=7.0.0",
 ]
 
 [dependency-groups]

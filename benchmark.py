@@ -3,6 +3,7 @@ import subprocess
 import glob as glob_mod
 import os
 import re
+import json
 import statistics
 from code_index.parser import parse_questions
 from code_index.database import init_client, get_collection
@@ -66,7 +67,23 @@ def extract_targets(question):
     for t in raw:
         if t.upper().strip() not in SKIP_TARGETS and len(t.strip()) > 1:
             targets.append(t.strip())
+    if not targets and question in _ground_truth_map:
+        gt = _ground_truth_map[question]
+        targets = gt.get("expected_keywords", [])[:5]
     return targets
+
+
+_ground_truth_map = {}
+
+
+def load_ground_truth():
+    global _ground_truth_map
+    gt_path = os.path.join(os.path.dirname(__file__), "benchmark_ground_truth.json")
+    if os.path.exists(gt_path):
+        with open(gt_path, "r") as f:
+            entries = json.load(f)
+        for entry in entries:
+            _ground_truth_map[entry["question"]] = entry
 
 
 def run_semantic_search(query, collection, n_results=5):
@@ -141,6 +158,7 @@ def check_match_any(results, targets, top_n):
 
 def run_full_benchmark():
     print("Parsing questions from questions.md...")
+    load_ground_truth()
     questions_by_codebase = parse_questions("questions.md")
 
     total_qs = sum(len(v) for v in questions_by_codebase.values())
@@ -149,13 +167,13 @@ def run_full_benchmark():
     print("Warming up embedder...")
     warm_up()
 
-    print("Initializing ChromaDB client...")
+    print("Initializing database client...")
     client = init_client("./code_index_db")
 
     collections = {}
     for codebase, coll_name in COLLECTION_MAP.items():
         collections[codebase] = get_collection(client, coll_name)
-        count = collections[codebase].count()
+        count = collections[codebase].count_rows()
         print(f"  {coll_name}: {count} chunks")
 
     results = []

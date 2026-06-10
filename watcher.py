@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-import uuid
+import hashlib
 import argparse
 import threading
 import time
@@ -11,6 +11,7 @@ from watchdog.events import FileSystemEventHandler
 
 from code_index.chunker import split_python_code, split_js_ts_code, get_file_paths
 from code_index.database import init_client, get_collection, index_codebase, update_codebase
+from code_index.embedder import embed_documents
 
 ALLOWED_EXTENSIONS = (".py", ".js", ".jsx", ".ts", ".tsx", ".md", ".txt", ".json", ".sql")
 DEBOUNCE_SECONDS = 2
@@ -39,12 +40,14 @@ def _chunk_file(file_path):
         }]
 
 
-def _delete_chunks_for_file(collection, file_path):
+def _delete_chunks_for_file(table, file_path):
     try:
-        existing = collection.get(where={"file": file_path})
-        if existing["ids"]:
-            collection.delete(where={"file": file_path})
-            return len(existing["ids"])
+        arrow_table = table.to_arrow()
+        files = arrow_table.column("file").to_pylist()
+        count = sum(1 for f in files if f == file_path)
+        if count > 0:
+            table.delete(f'file = "{file_path}"')
+            return count
     except Exception:
         pass
     return 0
@@ -60,8 +63,9 @@ def _find_codebase(file_path, codebases):
 
 
 class DebouncingHandler(FileSystemEventHandler):
-    def __init__(self, codebases):
+    def __init__(self, codebases, db_path):
         self.codebases = codebases
+        self.db_path = db_path
         self._pending = {}
         self._timer = None
         self._lock = threading.Lock()
@@ -115,10 +119,10 @@ class DebouncingHandler(FileSystemEventHandler):
         if cb is None:
             return
 
-        collection = cb["collection"]
+        table = cb["table"]
 
         if event_type == "deleted":
-            removed = _delete_chunks_for_file(collection, file_path)
+            removed = _delete_chunks_for_file(table, file_path)
             if removed:
                 print(f"[{cb['name']}] Deleted {removed} chunks for deleted file: {file_path}")
                 self._processed += removed
@@ -127,28 +131,33 @@ class DebouncingHandler(FileSystemEventHandler):
         if not os.path.exists(file_path):
             return
 
-        removed = _delete_chunks_for_file(collection, file_path)
+        removed = _delete_chunks_for_file(table, file_path)
         chunks = _chunk_file(file_path)
 
         if not chunks:
             return
 
         try:
-            existing_count = collection.count()
-            documents = [c["text"] for c in chunks]
-            metadatas = []
-            for c in chunks:
+            texts = [c["text"] for c in chunks]
+            vectors = embed_documents(texts).tolist()
+            records = []
+            for i, c in enumerate(chunks):
                 meta = dict(c["metadata"])
                 try:
                     with open(file_path, "rb") as fh:
-                        import hashlib
                         meta["file_hash"] = hashlib.md5(fh.read()).hexdigest()
                 except Exception:
                     meta["file_hash"] = ""
-                metadatas.append(meta)
-            ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
-
-            collection.add(documents=documents, metadatas=metadatas, ids=ids)
+                records.append({
+                    "vector": vectors[i],
+                    "text": texts[i],
+                    "file": meta.get("file", ""),
+                    "start_line": meta.get("start_line", 1),
+                    "type": meta.get("type", "file"),
+                    "name": meta.get("name", ""),
+                    "file_hash": meta.get("file_hash", ""),
+                })
+            table.add(records)
             action = "Updated" if removed else "Indexed"
             print(f"[{cb['name']}] {action} {len(chunks)} chunks from: {file_path}")
             self._processed += len(chunks)
@@ -156,36 +165,37 @@ class DebouncingHandler(FileSystemEventHandler):
             print(f"[{cb['name']}] Error indexing {file_path}: {e}")
 
 
-def _init_codebases(client, codebases):
+def _init_codebases(db, codebases, db_path):
     for cb in codebases:
         name = cb["name"]
         root = cb["root"]
 
         print(f"\nInitializing codebase '{name}' at {root}")
-        collection = get_collection(client, name)
-        cb["collection"] = collection
+        table = get_collection(db, name)
+        cb["table"] = table
 
-        if collection.count() == 0:
-            print(f"  Collection '{name}' is empty. Running full index...")
+        if table.count_rows() == 0:
+            print(f"  Table '{name}' is empty. Running full index...")
             chunks = get_file_paths(root)
             if chunks:
-                index_codebase(chunks, collection)
+                index_codebase(chunks, table, db_path=db_path, codebase_name=name)
             else:
                 print(f"  No files found to index in {root}")
         else:
-            print(f"  Collection '{name}' has {collection.count()} chunks. Running incremental update...")
-            update_codebase(root, collection, _chunk_file)
+            print(f"  Table '{name}' has {table.count_rows()} chunks. Running incremental update...")
+            update_codebase(root, table, _chunk_file, db_path=db_path, codebase_name=name)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Background file watcher for code indexing")
-    parser.add_argument("--db", default="./code_index_db", help="Path to ChromaDB directory")
+    parser.add_argument("--db", default="./code_index_db", help="Path to database directory")
     parser.add_argument("--watch", action="append", metavar="NAME=PATH",
                         help="Codebase to watch (format: name=/path/to/dir)")
     parser.add_argument("--config", help="Path to JSON config file")
     args = parser.parse_args()
 
     codebases = []
+    db_path = args.db
 
     if args.config:
         try:
@@ -213,10 +223,10 @@ def main():
             sys.exit(1)
 
     print(f"Starting watcher with {len(codebases)} codebase(s)...")
-    client = init_client(args.db)
-    _init_codebases(client, codebases)
+    db = init_client(db_path)
+    _init_codebases(db, codebases, db_path)
 
-    handler = DebouncingHandler(codebases)
+    handler = DebouncingHandler(codebases, db_path)
     observer = Observer()
 
     seen_roots = set()
