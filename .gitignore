@@ -42,9 +42,9 @@ code_index_db/
 *.db
 *.sqlite3
 
-# Benchmark / results (internal only)
+# Benchmark data (internal only)
 benchmark_ground_truth.json
-benchmark_results.md
+questions.md
 results/
 
 # Jupyter
