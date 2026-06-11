@@ -1,7 +1,13 @@
 import os
 import hashlib
 import json
+import warnings
+import logging
 from collections import OrderedDict
+
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
+warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
 
 _LOCAL_MODEL_DIR = os.path.join(os.path.expanduser("~"), ".cache", "code_index_models")
 os.makedirs(_LOCAL_MODEL_DIR, exist_ok=True)
