@@ -38,20 +38,6 @@ SKIP_TARGETS = {
     "postgres", "sqlite", "docker", "python", "javascript", "react",
 }
 
-CODEBASE_DIR_MAP = {
-    "card_infrastructure": "test_codebase/card_infrastructure",
-    "card_shop": "test_codebase/card_shop",
-    "card_collection": "test_codebase/card_collection",
-    "financial_visuals": "test_codebase/financial_visuals",
-}
-
-COLLECTION_MAP = {
-    "card_infrastructure": "card_infrastructure_index",
-    "card_shop": "card_shop_index",
-    "card_collection": "card_collection_index",
-    "financial_visuals": "financial_visuals_index",
-}
-
 GREP_EXTENSIONS = [
     "*.py", "*.js", "*.jsx", "*.ts", "*.tsx", "*.rs", "*.go", "*.java",
     "*.c", "*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp", "*.hxx",
@@ -60,6 +46,35 @@ GREP_EXTENSIONS = [
     "*.html", "*.css", "*.scss", "*.less", "*.vue", "*.svelte",
     "*.dockerfile", "Dockerfile", "Makefile", "*.conf",
 ]
+
+_ground_truth_cache = None
+
+
+def _discover_codebases():
+    from code_index.config_loader import get_codebases_from_config
+    codebases = get_codebases_from_config()
+    if codebases:
+        return {cb["name"]: cb["root"] for cb in codebases}
+    return {}
+
+
+def _load_questions(path="questions.md"):
+    questions = {}
+    current = None
+    if not os.path.exists(path):
+        return questions
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("# ") and not line.startswith("## "):
+                current = re.sub(r'[^\w\s]', '', line.lstrip("# ")).strip().lower().replace(" ", "_")
+                if current not in questions:
+                    questions[current] = []
+                continue
+            match = re.match(r'^\d+\.\s+(.+)', line)
+            if match and current:
+                questions[current].append(match.group(1))
+    return questions
 
 _ground_truth_cache = None
 
@@ -186,6 +201,9 @@ def run_benchmark(db_path="./code_index_db"):
 
     db = init_client(db_path)
 
+    print("Discovering codebases...")
+    codebase_dirs = _discover_codebases()
+
     print("Loading questions...")
     all_questions = _load_questions()
     _load_ground_truth()
@@ -194,11 +212,11 @@ def run_benchmark(db_path="./code_index_db"):
     errors = []
 
     for cb_name, questions in all_questions.items():
-        cb_dir = CODEBASE_DIR_MAP.get(cb_name)
+        cb_dir = codebase_dirs.get(cb_name)
         if not cb_dir or not os.path.isdir(cb_dir):
             continue
 
-        tbl_name = COLLECTION_MAP.get(cb_name)
+        tbl_name = f"{cb_name}_index"
         table = get_collection(db, tbl_name)
 
         if table.count_rows() == 0:
