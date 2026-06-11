@@ -6,18 +6,14 @@ import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from code_index.chunker import split_with_treesitter
+from code_index.chunker import split_with_treesitter, _CODE_EXTENSIONS
 from code_index.database import get_collection, update_codebase
 from code_index.embedder import embed_documents
 from code_index.secret_scanner import redact_chunk
 from code_index.path_security import is_safe_path
 from code_index.config import PERIODIC_REINDEX_SECONDS
 
-ALLOWED_EXTENSIONS = (
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java",
-    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
-    ".md", ".txt", ".json", ".sql",
-)
+ALLOWED_EXTENSIONS = _CODE_EXTENSIONS
 DEBOUNCE_SECONDS = 2
 
 

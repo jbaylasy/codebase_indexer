@@ -60,12 +60,18 @@ def _init_embedder():
     warm_up()
 
 
-def _index_codebase(name, root):
+def _index_codebase(name, root, quick=False):
     root = validate_root_dir(root)
     tbl_name = _table_name(root)
     table = _get_table(tbl_name)
 
     if table.count_rows() == 0:
+        if quick:
+            print(f"[{name}] Quick mode — skipping initial index, building in background")
+            from code_index.database import MerkleTree, _save_merkle_state
+            merkle_tree = MerkleTree(root)
+            _save_merkle_state(DB_PATH, name, merkle_tree)
+            return table
         print(f"[{name}] Chunking files...")
         chunks = get_file_paths(root)
         print(f"[{name}] Full index: {len(chunks)} chunks from {root}")
@@ -120,19 +126,24 @@ Examples:
 
   code-index serve --transport sse --port 8080
     Start SSE server on port 8080.
+
+  code-index serve --quick
+    Skip initial index, build in background via periodic re-index.
+    Useful on slow machines or large codebases.
 """)
 @click.option("--transport", default="stdio", show_default=True,
               type=click.Choice(["stdio", "sse", "streamable-http"]))
 @click.option("--host", default=None, help="Bind address for SSE/HTTP transports (default: 127.0.0.1)")
 @click.option("--port", default=None, type=int, help="Port for SSE/HTTP transports (default: 8000)")
-def serve(transport, host, port):
+@click.option("--quick", is_flag=True, help="Skip initial index, build in background")
+def serve(transport, host, port, quick):
     _startup()
     _init_embedder()
     codebases = _resolve_codebases()
     watcher_codebases = []
 
     for cb in codebases:
-        table = _index_codebase(cb["name"], cb["root"])
+        table = _index_codebase(cb["name"], cb["root"], quick=quick)
         watcher_codebases.append({
             "name": cb["name"],
             "root": cb["root"],

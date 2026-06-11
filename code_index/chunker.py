@@ -12,6 +12,11 @@ from code_index.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS, CHARS_PER_TOKE
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 CHUNK_TIMEOUT_SECONDS = 30
+_CODE_EXTENSIONS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java",
+    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
+    ".md", ".txt", ".json", ".sql",
+}
 
 _ts_parser = None
 
@@ -189,6 +194,9 @@ def split_js_ts_code(source_code, file_path):
 
 
 def _chunk_file(file_path):
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in _CODE_EXTENSIONS:
+        return []
     try:
         file_size = os.path.getsize(file_path)
     except OSError:
@@ -219,18 +227,14 @@ def _chunk_file(file_path):
 
 
 def _collect_file_paths(root_dir):
-    allowed_extensions = [
-        ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java",
-        ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
-        ".md", ".txt", ".json", ".sql",
-    ]
     file_paths = []
     for root, dirs, files in os.walk(root_dir):
         for d in dirs[:]:
             if d.startswith("."):
                 dirs.remove(d)
         for file in files:
-            if any(file.endswith(ext) for ext in allowed_extensions):
+            ext = os.path.splitext(file)[1].lower()
+            if ext in _CODE_EXTENSIONS:
                 file_paths.append(os.path.join(root, file))
     return file_paths
 

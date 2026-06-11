@@ -4,6 +4,7 @@ import hashlib
 import lancedb
 import pyarrow as pa
 from code_index.embedder import embed_documents
+from code_index.chunker import _CODE_EXTENSIONS
 
 
 def init_client(db_path="./code_index_db"):
@@ -58,6 +59,9 @@ class MerkleTree:
             except OSError:
                 continue
             if os.path.isfile(full):
+                ext = os.path.splitext(full)[1].lower()
+                if ext not in _CODE_EXTENSIONS:
+                    continue
                 h = f"{st.st_mtime:.6f}:{st.st_size}"
                 self.file_hashes[full] = h
                 entries.append(h)
@@ -172,6 +176,9 @@ def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=Non
 
     new_chunks = []
     for idx, fp in enumerate(files_to_reindex):
+        ext = os.path.splitext(fp)[1].lower()
+        if ext not in _CODE_EXTENSIONS:
+            continue
         print(f"    [{idx + 1}/{len(files_to_reindex)}] {os.path.basename(fp)}")
         with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
