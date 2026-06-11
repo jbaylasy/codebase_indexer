@@ -4,7 +4,9 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import signal
 
-warnings.filterwarnings("ignore", message=".*lancedb fork support is experimental.*")from code_index.parsers import TreeSitterParser
+warnings.filterwarnings("ignore", message=".*lancedb fork support is experimental.*")
+
+from code_index.parsers import TreeSitterParser
 from code_index.parsers.base import ASTNode
 from code_index.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS, CHARS_PER_TOKEN
 

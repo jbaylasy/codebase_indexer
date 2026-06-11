@@ -328,7 +328,7 @@ exclude:
 | `CODE_INDEX_PERIODIC_REINDEX_SECONDS` | `300` | Full Merkle re-index interval (0 to disable) |
 | `CODE_INDEX_MAX_FILE_SIZE_MB` | `10` | Skip files larger than this |
 | `CODE_INDEX_DB_ENCRYPTION_KEY` | (auto-generated) | Fernet key for encryption at rest |
-| `CODE_INDEX_ALLOWED_DIRS` | (cwd) | Restrict indexed paths (comma-separated). Empty = allow any non-sensitive path. |
+| `CODE_INDEX_ALLOWED_DIRS` | (empty) | Restrict indexed paths (comma-separated). Empty = allow any non-sensitive path. |
 | `CODE_INDEX_AUDIT_DIR` | (disabled) | Directory for JSONL audit logs |
 | `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for the embedder |
 | `CODE_INDEX_EMBEDDING_BATCH_SIZE` | `256` | Embedding batch size. Larger = faster on modern CPUs (AMX, AVX-512). Lower if memory-constrained. |
