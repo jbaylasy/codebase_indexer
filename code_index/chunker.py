@@ -243,7 +243,7 @@ def get_file_paths(root_dir, max_workers=None):
     if not file_paths:
         return []
 
-    workers = max_workers or min(os.cpu_count() or 4, 8)
+    workers = max_workers or min(os.cpu_count() or 4, 4)
 
     if len(file_paths) < 10:
         all_chunks = []

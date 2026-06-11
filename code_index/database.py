@@ -105,30 +105,34 @@ def index_codebase(chunks, table, db_path=None, codebase_name=None):
         return
     from code_index.embedder import embed_documents
 
-    texts = [c["text"] for c in chunks]
-    print(f"  Embedding {len(texts)} chunks...")
-    vectors = embed_documents(texts).tolist()
-    records = []
-    for i, c in enumerate(chunks):
-        meta = dict(c["metadata"])
-        file_path = meta.get("file", "")
-        if file_path and os.path.exists(file_path):
-            fh = _hash_file(file_path)
-        else:
-            fh = ""
-        records.append({
-            "vector": vectors[i],
-            "text": texts[i],
-            "file": meta.get("file", ""),
-            "start_line": meta.get("start_line", 1),
-            "type": meta.get("type", "file"),
-            "name": meta.get("name", ""),
-            "file_hash": fh,
-        })
-    print(f"  Writing {len(records)} records to database...")
-    table.add(records)
+    batch_size = 2000
+    total = len(chunks)
+    print(f"  Embedding {total} chunks in batches of {batch_size}...")
+    for start in range(0, total, batch_size):
+        batch = chunks[start:start + batch_size]
+        texts = [c["text"] for c in batch]
+        vectors = embed_documents(texts).tolist()
+        records = []
+        for i, c in enumerate(batch):
+            meta = dict(c["metadata"])
+            file_path = meta.get("file", "")
+            if file_path and os.path.exists(file_path):
+                fh = _hash_file(file_path)
+            else:
+                fh = ""
+            records.append({
+                "vector": vectors[i],
+                "text": texts[i],
+                "file": meta.get("file", ""),
+                "start_line": meta.get("start_line", 1),
+                "type": meta.get("type", "file"),
+                "name": meta.get("name", ""),
+                "file_hash": fh,
+            })
+        table.add(records)
+        print(f"  Batch {start // batch_size + 1}/{(total + batch_size - 1) // batch_size}: {len(records)} chunks written")
     _rebuild_fts_index(table)
-    print(f"  Done — {len(records)} chunks indexed.")
+    print(f"  Done — {total} chunks indexed.")
 
 
 def _rebuild_fts_index(table):
