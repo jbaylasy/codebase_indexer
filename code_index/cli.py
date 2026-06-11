@@ -13,7 +13,7 @@ from code_index.search import search_code
 from code_index.embedder import init_embedder, warm_up
 from code_index.path_security import validate_root_dir
 from code_index.config_loader import get_codebases_from_config
-from code_index.config_setup import run_setup
+from code_index.config_setup import run_setup, quick_setup
 from code_index import watcher
 from code_index.query_sanitizer import sanitize_query, validate_codebase_name, validate_n_results
 from code_index.audit import init_audit_log, log_search, log_list_codebases, log_remove_codebase, log_error, log_security_event
@@ -47,18 +47,12 @@ def _get_table(name):
     return _tables[name]
 
 
-def _resolve_codebases(target_dir=None):
-    if target_dir:
-        name = os.path.basename(os.path.abspath(target_dir))
-        return [{"name": name, "root": os.path.abspath(target_dir)}]
+def _resolve_codebases():
     config_cbs = get_codebases_from_config()
     if config_cbs:
         return config_cbs
     print("No .codeindex.yml found.", file=sys.stderr)
-    print("Pass a directory to serve/index:", file=sys.stderr)
-    print(f"  {sys.argv[0]} serve ~/my-project", file=sys.stderr)
-    print(f"  {sys.argv[0]} index ~/my-project", file=sys.stderr)
-    print("Or run setup to create a config:", file=sys.stderr)
+    print("Run setup first to configure a project:", file=sys.stderr)
     print(f"  {sys.argv[0]} setup ~/my-project", file=sys.stderr)
     sys.exit(1)
 
@@ -90,19 +84,21 @@ def main(ctx):
         print(ctx.get_help())
         print()
         print("  Examples:")
-        print("    code-index serve ~/my-project       Index and serve a project")
-        print("    code-index index ~/my-project       One-shot index")
-        print("    code-index setup ~/my-project       Create config file")
+        print("    code-index setup ~/my-project       Configure a project")
+        print("    code-index serve                     Start server (run after setup)")
+        print("    code-index index                     One-shot index")
         print("    code-index search --query <q> --codebase <name>")
         print()
 
 
 @main.command(help="""
-Start the MCP server — index codebases, watch files, and serve search queries.
+Start the MCP server — index configured codebases, watch files, and serve
+search queries.
 
-If PATH is given, indexes that directory with default settings and no config
-file needed. Otherwise looks for .codeindex.yml in the current directory
-(walks up to git root).
+Requires a .codeindex.yml config file in the current directory (walks up to
+git root). Create one with:
+
+  code-index setup ~/my-project
 
 The server continuously watches files for changes and reindexes automatically.
 A periodic full reindex also runs every 300s (configurable).
@@ -117,24 +113,20 @@ Transport modes:
 
 Examples:
 
-  code-index serve ~/my-project
-    Index and serve a project by path. No config needed.
+  code-index serve
+    Start with stdio transport (default).
 
-  cd ~/my-project && code-index serve
-    Serve the current directory (looks for .codeindex.yml).
-
-  code-index serve --transport sse --port 8080 ~/my-project
-    SSE server on port 8080.
+  code-index serve --transport sse --port 8080
+    Start SSE server on port 8080.
 """)
-@click.argument("path", default=None, required=False)
 @click.option("--transport", default="stdio", show_default=True,
               type=click.Choice(["stdio", "sse", "streamable-http"]))
 @click.option("--host", default=None, help="Bind address for SSE/HTTP transports (default: 127.0.0.1)")
 @click.option("--port", default=None, type=int, help="Port for SSE/HTTP transports (default: 8000)")
-def serve(path, transport, host, port):
+def serve(transport, host, port):
     _startup()
     _init_embedder()
-    codebases = _resolve_codebases(target_dir=path)
+    codebases = _resolve_codebases()
     watcher_codebases = []
 
     for cb in codebases:
@@ -248,27 +240,20 @@ def serve(path, transport, host, port):
 
 
 @main.command(name="index", help="""
-Index or re-index codebases without starting the MCP server.
+Index or re-index configured codebases without starting the MCP server or
+file watcher.
 
-If PATH is given, indexes that directory with default settings and no config
-file needed. Otherwise looks for .codeindex.yml in the current directory
-(walks up to git root).
+Requires a .codeindex.yml config file in the current directory (walks up to
+git root). Create one with:
+
+  code-index setup ~/my-project
 
 Useful for batch indexing or CI pipelines.
-
-Examples:
-
-  code-index index ~/my-project
-    Index a project by path. No config needed.
-
-  cd ~/my-project && code-index index
-    Index using .codeindex.yml from the project directory.
 """)
-@click.argument("path", default=None, required=False)
-def index_cmd(path):
+def index_cmd():
     _startup()
     _init_embedder()
-    codebases = _resolve_codebases(target_dir=path)
+    codebases = _resolve_codebases()
     for cb in codebases:
         root = validate_root_dir(cb["root"])
         table = get_collection(_get_db(), f"{cb['name']}_index")
@@ -278,26 +263,23 @@ def index_cmd(path):
 
 
 @main.command(help="""
-Set up a project for indexing.
+Configure a project for indexing.
 
 Writes a .codeindex.yml config file and a .env with an encryption key in the
-project directory. This is optional — you can pass a PATH directly to
-code-index serve or code-index index without any setup.
-
-The config file lets you customize extensions, exclusions, and index multiple
-codebases. Config auto-discovery walks up from cwd to find .codeindex.yml.
+current directory. After this, code-index serve and code-index index will
+know which project to use.
 
 Examples:
 
   code-index setup ~/my-project
-    Create .codeindex.yml and .env in ~/my-project.
-
-  cd ~/my-project && code-index setup
-    Same, using current directory.
+    Configure indexing for ~/my-project.
 """)
-@click.argument("path", default=None, required=False)
+@click.argument("path", required=True)
 def setup(path):
-    run_setup(start_dir=path)
+    if not os.path.isdir(path):
+        print(f"Error: not a directory: {path}", file=sys.stderr)
+        sys.exit(1)
+    quick_setup(path)
 
 
 @main.command(help="""

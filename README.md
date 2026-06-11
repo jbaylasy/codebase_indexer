@@ -16,19 +16,17 @@ git clone <url>
 cd codebase_indexer
 uv sync
 
-# Index and serve any project — one command, no config needed
-uv run code-index serve ~/my-project
+# 1. Configure a project to index (required first step)
+uv run code-index setup ~/my-project
 
-# Search while the server runs (in another terminal)
+# 2. Start the server — indexes everything and watches for changes
+uv run code-index serve
+
+# 3. Search while the server runs (in another terminal)
 uv run code-index search --query "api rate limiter" --codebase my-project
 ```
 
-That covers 90% of use cases. For custom file extensions, exclusions, or multiple
-codebases, see `code-index setup` below.
-
 ---
-
-## Usage Guide
 
 ## Usage Guide
 
@@ -40,23 +38,28 @@ cd codebase_indexer
 uv sync
 ```
 
-Now `code-index` is ready. You can point it at any project on your machine.
-
-### 2. Index and serve a project
+### 2. Configure a project
 
 ```bash
-uv run code-index serve ~/my-project
+uv run code-index setup ~/my-project
 ```
 
-That's it. One command:
+This writes `.codeindex.yml` and `.env` in the current directory. The config tells
+`code-index` which project to index.
+
+### 3. Start the server
+
+```bash
+uv run code-index serve
+```
+
+On first run:
 1. The embedding model downloads (once, cached after).
-2. All source files in `~/my-project` are parsed via tree-sitter, chunked into functions/classes/methods, and embedded into LanceDB.
+2. All source files in the configured project are parsed via tree-sitter, chunked into functions/classes/methods, and embedded into LanceDB.
 3. The MCP server starts, ready for search queries.
 4. A file watcher watches for edits and re-indexes automatically.
 
-No config file needed. To customize (extensions, exclusions, multi-project), see `code-index setup`.
-
-### 3. Search
+### 4. Search
 
 While the server is running, query from another terminal:
 
@@ -66,17 +69,14 @@ uv run code-index search --query "database pool" --codebase my-project
 
 Or connect an AI agent (see MCP section below).
 
-### 4. Other commands
+### 5. Other commands
 
 ```bash
 # One-shot index (no server)
-uv run code-index index ~/my-project
-
-# Create a config file for custom settings
-uv run code-index setup ~/my-project
+uv run code-index index
 
 # SSE server on a custom port
-uv run code-index serve ~/my-project --transport sse --port 8080
+uv run code-index serve --transport sse --port 8080
 ```
 
 ---
@@ -87,21 +87,21 @@ uv run code-index serve ~/my-project --transport sse --port 8080
 
 Prints usage help with examples.
 
-### `code-index serve [PATH]`
+### `code-index serve`
 
 Start the MCP server — index codebases, watch files, and serve search queries.
 
+Requires a `.codeindex.yml` config (created by `code-index setup`).
+
 ```bash
-code-index serve ~/my-project          # index and serve (no config needed)
-code-index serve                        # use .codeindex.yml from cwd
-code-index serve ~/my-project --transport sse --port 8080
+code-index serve                         # start server
+code-index serve --transport sse --port 8080
 ```
 
-**Arguments & Options:**
+**Options:**
 
 | Flag | Description |
 |------|-------------|
-| `PATH` | Directory to index (positional, optional). Default: use `.codeindex.yml`. |
 | `--transport` | `stdio` (default), `sse`, or `streamable-http` |
 | `--host` | Bind address for SSE/HTTP (default: 127.0.0.1) |
 | `--port` | Port for SSE/HTTP (default: 8000) |
@@ -115,16 +115,17 @@ code-index serve ~/my-project --transport sse --port 8080
 
 Leave this running while you work — it watches for changes and keeps the index fresh.
 
-### `code-index index [PATH]`
+### `code-index index`
 
 One-shot indexing without starting the server or file watcher.
 
+Requires a `.codeindex.yml` config (created by `code-index setup`).
+
 ```bash
-code-index index ~/my-project           # index by path
-code-index index                         # use .codeindex.yml from cwd
+code-index index
 ```
 
-**When to use:** CI pipelines, or pre-building the index before serving.
+**When to use:** CI pipelines, or re-indexing after config changes.
 
 ### `code-index search --query Q --codebase NAME`
 
@@ -163,16 +164,16 @@ class ConnectionPool:
 ------------------------------------------------------------
 ```
 
-### `code-index setup [PATH]`
+### `code-index setup PATH`
 
-Create a config file for advanced usage (custom extensions, exclusions, multiple codebases).
+Configure a project for indexing.
+
+Creates `.codeindex.yml` and `.env` in the current directory. Required before
+`serve` or `index`.
 
 ```bash
-code-index setup ~/my-project          # create config for a project
-code-index setup                        # create config for cwd
+code-index setup ~/my-project
 ```
-
-Writes `.codeindex.yml` and `.env` in the project directory. Once the config exists, `serve` and `index` can run without PATH.
 
 ---
 
@@ -339,14 +340,18 @@ Built into every layer of the pipeline:
 ### Live development with auto-reindexing
 
 ```bash
-# Terminal 1: Start the server
-uv run code-index serve ~/projects/my-app
+# One-time setup
+uv run code-index setup ~/projects/my-app
+
+# Start the server
+uv run code-index serve
 ```
 
 ### One-shot indexing (CI)
 
 ```bash
-uv run code-index index ~/projects/my-app
+uv run code-index setup ~/projects/my-app
+uv run code-index index
 ```
 
 ### Search via CLI

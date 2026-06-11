@@ -165,3 +165,28 @@ def run_setup(start_dir=None, config_path=None):
     print(f"  Encryption key generated and saved to {env_path}")
     print()
     return codebases
+
+
+def quick_setup(project_path, config_save_dir=None):
+    project_path = os.path.abspath(project_path)
+    name = os.path.basename(project_path)
+    codebases = [{"name": name, "root": project_path}]
+    config_text = generate_config(codebases)
+    saved_path = save_config(config_text, config_save_dir)
+    enc_key = _generate_encryption_key()
+
+    env_path = os.path.join(os.path.dirname(saved_path), ".env")
+    env_lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            env_lines = [l for l in f.readlines() if not l.startswith("CODE_INDEX_DB_ENCRYPTION_KEY=")]
+    env_lines.append(f"CODE_INDEX_DB_ENCRYPTION_KEY={enc_key}\n")
+    with open(env_path, "w") as f:
+        f.writelines(env_lines)
+
+    print()
+    print(f"  Config saved to {saved_path}")
+    print(f"  Codebase: {name} -> {project_path}")
+    print(f"  Encryption key generated and saved to {env_path}")
+    print()
+    return codebases
