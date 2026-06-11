@@ -216,14 +216,7 @@ graph TD
 
 2. **Secret scanning** — Each chunk is scanned for 25+ regex patterns (AWS keys, JWTs, private keys, etc.) plus Shannon entropy checks. Matches are redacted before embedding.
 
-3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached. Batch size is configurable (`EMBEDDING_BATCH_SIZE`, default 64) — increase to 256 on Apple Silicon or high-end x86 for 2–4× throughput. Lower to 32 on low-memory machines. ONNX backend (`CODE_INDEX_EMBEDDING_BACKEND=onnx`) gives 2–4× CPU speedup with no GPU needed:
-
-   ```bash
-   uv pip install "optimum[onnxruntime]"
-   echo "CODE_INDEX_EMBEDDING_BACKEND=onnx" >> .env
-   ```
-
-   Note: zsh requires quotes around `optimum[onnxruntime]` — the brackets are a glob pattern otherwise.
+3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached. Batch size is configurable (`EMBEDDING_BATCH_SIZE`, default 64) — increase to 256 on Apple Silicon or high-end x86 for 2–4× throughput. Lower to 32 on low-memory machines.
 
 4. **Storage** — Vectors and metadata are stored in LanceDB with a full-text search (FTS) index over the chunk text.
 
@@ -325,7 +318,6 @@ exclude:
 |----------|---------|-------------|
 | `CODE_INDEX_DB_PATH` | `./code_index_db` | LanceDB persistence directory |
 | `CODE_INDEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | HuggingFace model ID |
-| `CODE_INDEX_EMBEDDING_BACKEND` | (PyTorch) | Set to `onnx` for 2-4x CPU speedup (requires `pip install optimum[onnxruntime]`) |
 | `CODE_INDEX_EMBEDDING_MODEL_SHA256` | (empty) | Verify model integrity on download |
 | `CODE_INDEX_EMBEDDING_OFFLINE` | `false` | Skip model download, use cached only |
 | `CODE_INDEX_N_RESULTS` | `3` | Default number of search results |

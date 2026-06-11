@@ -10,7 +10,7 @@ os.environ.setdefault("HF_HOME", _LOCAL_MODEL_DIR)
 os.environ.setdefault("HF_HUB_CACHE", _LOCAL_MODEL_DIR)
 
 from sentence_transformers import SentenceTransformer
-from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE, EMBEDDING_BATCH_SIZE, EMBEDDING_BACKEND
+from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE, EMBEDDING_BATCH_SIZE
 
 _model = None
 _cache = None
@@ -61,8 +61,6 @@ def init_embedder(cache_size=512, model_name=None):
     if _model is None:
         name = model_name or EMBEDDING_MODEL
         kwargs = {"cache_folder": _LOCAL_MODEL_DIR}
-        if EMBEDDING_BACKEND:
-            kwargs["backend"] = EMBEDDING_BACKEND
         if EMBEDDING_OFFLINE:
             kwargs["cache_folder"] = os.environ.get(
                 "TRANSFORMERS_CACHE",
