@@ -84,7 +84,7 @@ def embed_documents(texts):
     global _model
     if _model is None:
         init_embedder()
-    return _model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    return _model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
 
 
 def warm_up():
