@@ -42,9 +42,10 @@ code_index_db/
 *.db
 *.sqlite3
 
-# Benchmark / results
-results/
+# Benchmark / results (internal only)
+benchmark_ground_truth.json
 benchmark_results.md
+results/
 
 # Jupyter
 .ipynb_checkpoints/
