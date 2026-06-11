@@ -12,16 +12,15 @@ Local-first semantic code search engine with tree-sitter AST chunking, hybrid se
 ## Quick Start
 
 ```bash
-# Install
-git clone <repo-url> ~/code-index
-cd ~/code-index
+git clone <url>
+cd codebase_indexer
 uv sync
 
 # Index and serve any project — one command, no config needed
-uv run ~/code-index/code-index serve ~/my-project
+uv run code-index serve ~/my-project
 
 # Search while the server runs (in another terminal)
-uv run ~/code-index/code-index search --query "api rate limiter" --codebase my-project
+uv run code-index search --query "api rate limiter" --codebase my-project
 ```
 
 That covers 90% of use cases. For custom file extensions, exclusions, or multiple
@@ -31,11 +30,13 @@ codebases, see `code-index setup` below.
 
 ## Usage Guide
 
+## Usage Guide
+
 ### 1. Install
 
 ```bash
-git clone <repo-url> ~/code-index
-cd ~/code-index
+git clone <url>
+cd codebase_indexer
 uv sync
 ```
 
@@ -44,7 +45,7 @@ Now `code-index` is ready. You can point it at any project on your machine.
 ### 2. Index and serve a project
 
 ```bash
-uv run ~/code-index/code-index serve ~/my-project
+uv run code-index serve ~/my-project
 ```
 
 That's it. One command:
@@ -60,7 +61,6 @@ No config file needed. To customize (extensions, exclusions, multi-project), see
 While the server is running, query from another terminal:
 
 ```bash
-cd ~/code-index
 uv run code-index search --query "database pool" --codebase my-project
 ```
 
@@ -70,13 +70,13 @@ Or connect an AI agent (see MCP section below).
 
 ```bash
 # One-shot index (no server)
-uv run ~/code-index/code-index index ~/my-project
+uv run code-index index ~/my-project
 
 # Create a config file for custom settings
-uv run ~/code-index/code-index setup ~/my-project
+uv run code-index setup ~/my-project
 
 # SSE server on a custom port
-uv run ~/code-index/code-index serve ~/my-project --transport sse --port 8080
+uv run code-index serve ~/my-project --transport sse --port 8080
 ```
 
 ---
@@ -240,8 +240,16 @@ The MCP server exposes three tools for MCP-compatible agents.
 
 **Claude Code:**
 
+Connect directly while in the repo directory:
+
 ```bash
-claude mcp add code-index -- uv run --directory /path/to/code-index python -m code_index
+claude mcp add code-index -- uv run python -m code_index
+```
+
+If running from outside the repo:
+
+```bash
+claude mcp add code-index -- uv run --directory /path/to/codebase_indexer python -m code_index
 ```
 
 **opencode:**
@@ -251,7 +259,7 @@ claude mcp add code-index -- uv run --directory /path/to/code-index python -m co
   "mcpServers": {
     "code-index": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/code-index", "python", "-m", "code_index"]
+      "args": ["run", "--directory", "/path/to/codebase_indexer", "python", "-m", "code_index"]
     }
   }
 }
@@ -332,29 +340,21 @@ Built into every layer of the pipeline:
 
 ```bash
 # Terminal 1: Start the server
-cd ~/projects/my-app
-uv run /path/to/code-index/code-index serve
-
-# The server indexes everything, then watches for changes.
-# Any file edit triggers automatic re-chunking and re-embedding.
+uv run code-index serve ~/projects/my-app
 ```
 
 ### One-shot indexing (CI)
 
 ```bash
-cd ~/projects/my-app
-uv run /path/to/code-index/code-index setup
-uv run /path/to/code-index/code-index index
+uv run code-index index ~/projects/my-app
 ```
 
 ### Search via CLI
 
+While the server is running:
+
 ```bash
-cd ~/projects/my-app
-uv run /path/to/code-index/code-index search \
-  --query "how does the retry logic work" \
-  --codebase my-app \
-  --n-results 5
+uv run code-index search --query "how does the retry logic work" --codebase my-app --n-results 5
 ```
 
 ### Index multiple projects
