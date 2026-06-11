@@ -273,13 +273,19 @@ Examples:
 
   code-index setup ~/my-project
     Configure indexing for ~/my-project.
+
+  code-index setup
+    Interactive wizard — prompts for the project directory.
 """)
-@click.argument("path", required=True)
+@click.argument("path", default=None, required=False)
 def setup(path):
-    if not os.path.isdir(path):
-        print(f"Error: not a directory: {path}", file=sys.stderr)
-        sys.exit(1)
-    quick_setup(path)
+    if path:
+        if not os.path.isdir(path):
+            print(f"Error: not a directory: {path}", file=sys.stderr)
+            sys.exit(1)
+        quick_setup(path)
+    else:
+        run_setup()
 
 
 @main.command(help="""

@@ -16,13 +16,13 @@ git clone <url>
 cd codebase_indexer
 uv sync
 
-# 1. Configure a project to index (required first step)
-uv run code-index setup ~/my-project
+# Configure a project to index (required first step)
+uv run code-index setup ~/my-project   # or just `code-index setup` for interactive
 
-# 2. Start the server — indexes everything and watches for changes
+# Start the server — indexes everything and watches for changes
 uv run code-index serve
 
-# 3. Search while the server runs (in another terminal)
+# Search while the server runs (in another terminal)
 uv run code-index search --query "api rate limiter" --codebase my-project
 ```
 
@@ -164,7 +164,7 @@ class ConnectionPool:
 ------------------------------------------------------------
 ```
 
-### `code-index setup PATH`
+### `code-index setup [PATH]`
 
 Configure a project for indexing.
 
@@ -172,7 +172,8 @@ Creates `.codeindex.yml` and `.env` in the current directory. Required before
 `serve` or `index`.
 
 ```bash
-code-index setup ~/my-project
+code-index setup ~/my-project     # specify path directly
+code-index setup                   # interactive wizard
 ```
 
 ---
