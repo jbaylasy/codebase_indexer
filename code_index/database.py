@@ -103,7 +103,10 @@ def _load_merkle_state(db_path, codebase_name):
 def index_codebase(chunks, table, db_path=None, codebase_name=None):
     if not chunks:
         return
+    from code_index.embedder import embed_documents
+
     texts = [c["text"] for c in chunks]
+    print(f"  Embedding {len(texts)} chunks...")
     vectors = embed_documents(texts).tolist()
     records = []
     for i, c in enumerate(chunks):
@@ -122,9 +125,10 @@ def index_codebase(chunks, table, db_path=None, codebase_name=None):
             "name": meta.get("name", ""),
             "file_hash": fh,
         })
+    print(f"  Writing {len(records)} records to database...")
     table.add(records)
     _rebuild_fts_index(table)
-    print(f"Added {len(records)} chunks to the database.")
+    print(f"  Done — {len(records)} chunks indexed.")
 
 
 def _rebuild_fts_index(table):
@@ -135,13 +139,15 @@ def _rebuild_fts_index(table):
 
 
 def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=None):
+    from code_index.embedder import embed_documents
+
     current_tree = MerkleTree(root_dir)
     old_state = _load_merkle_state(db_path or "./code_index_db", codebase_name or "unknown")
     changed_files, new_files = current_tree.get_changed_files(old_state)
     unchanged_skipped = len(current_tree.file_hashes) - len(changed_files) - len(new_files)
 
     if not changed_files and not new_files:
-        print(f"No changes detected ({unchanged_skipped} files unchanged).")
+        print(f"  No changes detected ({unchanged_skipped} files unchanged).")
         return
 
     files_to_reindex = changed_files + new_files
@@ -152,16 +158,18 @@ def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=Non
                 table.delete(f'file = "{fp}"')
             except Exception:
                 pass
-        print(f"Deleted old chunks for {len(changed_files)} changed files.")
+        print(f"  Deleted old chunks for {len(changed_files)} changed files.")
 
     new_chunks = []
-    for fp in files_to_reindex:
+    for idx, fp in enumerate(files_to_reindex):
+        print(f"    [{idx + 1}/{len(files_to_reindex)}] {os.path.basename(fp)}")
         with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         chunks = chunker_fn(content, fp)
         new_chunks.extend(chunks)
 
     if new_chunks:
+        print(f"  Embedding {len(new_chunks)} chunks...")
         texts = [c["text"] for c in new_chunks]
         vectors = embed_documents(texts).tolist()
         records = []
@@ -176,9 +184,10 @@ def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=Non
                 "name": meta.get("name", ""),
                 "file_hash": current_tree.file_hashes.get(meta.get("file", ""), ""),
             })
+        print(f"  Writing {len(records)} records to database...")
         table.add(records)
         _rebuild_fts_index(table)
-        print(f"Indexed {len(new_chunks)} chunks from {len(files_to_reindex)} files "
+        print(f"  Done — {len(new_chunks)} chunks from {len(files_to_reindex)} files "
               f"({len(new_files)} new, {len(changed_files)} changed, {unchanged_skipped} unchanged).")
 
     _save_merkle_state(db_path or "./code_index_db", codebase_name or "unknown", current_tree)

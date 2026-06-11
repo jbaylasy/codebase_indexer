@@ -1,24 +1,29 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import click
 from mcp.server.fastmcp import FastMCP
 
 from code_index.config import DB_PATH, EMBEDDING_CACHE_SIZE, PERIODIC_REINDEX_SECONDS
-from code_index.chunker import get_file_paths
+from code_index.chunker import get_file_paths, split_with_treesitter
 from code_index.database import init_client, get_collection, index_codebase, update_codebase
 from code_index.search import search_code
-from code_index.embedder import warm_up, init_embedder
+from code_index.embedder import init_embedder, warm_up
 from code_index.path_security import validate_root_dir
 from code_index.config_loader import get_codebases_from_config
 from code_index.config_setup import run_setup
-from code_index import watcher as _watcher
+from code_index import watcher
 from code_index.query_sanitizer import sanitize_query, validate_codebase_name, validate_n_results
 from code_index.audit import init_audit_log, log_search, log_list_codebases, log_remove_codebase, log_error, log_security_event
 
 _db = None
 _tables = {}
+
+
+def _startup():
+    print("  code-index ready", file=sys.stderr)
 
 
 def _get_db():
@@ -65,8 +70,6 @@ def _index_codebase(name, root):
         print(f"[{name}] Full index: {len(chunks)} chunks from {root}")
         index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name)
     else:
-        from code_index.chunker import split_with_treesitter
-
         update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name)
         print(f"[{name}] Incremental update done ({table.count_rows()} chunks)")
     return table
@@ -81,6 +84,7 @@ def main(ctx):
 
 @main.command()
 def serve():
+    _startup()
     _init_embedder()
     codebases = _resolve_codebases()
     watcher_codebases = []
@@ -94,8 +98,8 @@ def serve():
         })
 
     if watcher_codebases:
-        _watcher.start_watcher(watcher_codebases)
-        _watcher.start_periodic_reindex(watcher_codebases, DB_PATH)
+        watcher.start_watcher(watcher_codebases)
+        watcher.start_periodic_reindex(watcher_codebases, DB_PATH)
 
     mcp = FastMCP("code_index")
     init_audit_log()
@@ -172,10 +176,15 @@ def serve():
 
 @main.command(name="index")
 def index_cmd():
+    _startup()
     _init_embedder()
     codebases = _resolve_codebases()
     for cb in codebases:
-        _index_codebase(cb["name"], cb["root"])
+        root = validate_root_dir(cb["root"])
+        table = get_collection(_get_db(), f"{cb['name']}_index")
+        chunks = get_file_paths(root)
+        print(f"[{cb['name']}] Indexing {len(chunks)} chunks from {root}")
+        index_codebase(chunks, table, db_path=DB_PATH, codebase_name=cb["name"])
 
 
 @main.command()
@@ -187,6 +196,7 @@ def setup():
 @click.option("--query", required=True, help="Search query")
 @click.option("--codebase", "codebase_name", required=True, help="Codebase name to search")
 def search(query, codebase_name):
+    _startup()
     _init_embedder()
     table = _get_table(f"{codebase_name}_index")
     result = search_code(query, table)
