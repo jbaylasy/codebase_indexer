@@ -112,7 +112,15 @@ uv run pytest tests/ -v
 
 ## Benchmark Results
 
-220 natural language queries across 3 codebases, comparing semantic search vs grep vs glob:
+Run the benchmark suite (220 natural language queries across 3 codebases):
+
+```bash
+uv run python -m code_index.benchmark
+```
+
+Compares semantic search vs grep vs glob. Results are written to `benchmark_results.md`.
+
+Latest results:
 
 | Metric | Semantic (LanceDB) | Grep | Glob |
 |--------|---------------------|------|------|
