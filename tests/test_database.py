@@ -58,25 +58,31 @@ def test_update_codebase_detects_new_files(tmp_path):
 
 
 def test_update_codebase_detects_changed_files(tmp_path):
-    client = init_client(str(tmp_path / "db"))
+    src_path = str(tmp_path / "src")
+    os.makedirs(src_path)
+    db_path = str(tmp_path / "db")
+
+    client = init_client(db_path)
     table = get_collection(client, "test_update_changed")
 
-    py_file = tmp_path / "mod.py"
+    py_file = tmp_path / "src" / "mod.py"
     py_file.write_text(
         "def original():\n"
         "    a = 1\n"
-        "    return a\n"
+        "    b = a + 1\n"
+        "    return b\n"
     )
     from code_index.chunker import split_python_code
-    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_changed")
+    update_codebase(src_path, table, split_python_code, db_path=db_path, codebase_name="test_update_changed")
     assert table.count_rows() >= 1
 
     py_file.write_text(
         "def changed():\n"
         "    b = 2\n"
-        "    return b\n"
+        "    c = b + 1\n"
+        "    return c\n"
     )
-    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_changed")
+    update_codebase(src_path, table, split_python_code, db_path=db_path, codebase_name="test_update_changed")
 
     arrow_table = table.to_arrow()
     names = arrow_table.column("name").to_pylist()
@@ -84,20 +90,24 @@ def test_update_codebase_detects_changed_files(tmp_path):
 
 
 def test_update_codebase_skips_unchanged(tmp_path):
-    client = init_client(str(tmp_path / "db"))
+    db_path = str(tmp_path / "db")
+    src_path = str(tmp_path / "src")
+    os.makedirs(src_path)
+
+    client = init_client(db_path)
     table = get_collection(client, "test_update_skip")
 
-    py_file = tmp_path / "stable.py"
+    py_file = tmp_path / "src" / "stable.py"
     py_file.write_text(
         "def stable():\n"
         "    a = 1\n"
         "    return a\n"
     )
     from code_index.chunker import split_python_code
-    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_skip")
+    update_codebase(src_path, table, split_python_code, db_path=db_path, codebase_name="test_update_skip")
     count_before = table.count_rows()
 
-    update_codebase(str(tmp_path), table, split_python_code, db_path=str(tmp_path / "db"), codebase_name="test_update_skip")
+    update_codebase(src_path, table, split_python_code, db_path=db_path, codebase_name="test_update_skip")
     count_after = table.count_rows()
 
     assert count_before == count_after

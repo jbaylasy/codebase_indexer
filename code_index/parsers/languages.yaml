@@ -1,0 +1,14 @@
+.py: python
+.js: javascript
+.jsx: javascript
+.ts: typescript
+.tsx: typescript
+.rs: rust
+.go: go
+.java: java
+.c: c
+.cpp: cpp
+.cc: cpp
+.cxx: cpp
+.hxx: cpp
+.hpp: cpp

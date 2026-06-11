@@ -1,202 +1,258 @@
-# Semantic Code Search -- Semantic Code Search Engine with MCP Interface
+# Semantic Code Search
 
-Semantic Code Search is a semantic code search engine that lets AI agents find code by natural language queries instead of keyword matching. It indexes source files into a local vector database, enabling fast and accurate code retrieval powered by the `all-MiniLM-L6-v2` embedding model. The project exposes its search capabilities through an MCP (Model Context Protocol) server, a CLI, and a background file watcher for live indexing.
+Local-first semantic code search engine with MCP server, live file watching, and AST-aware chunking via tree-sitter.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                       Semantic Code Search Architecture                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────┐     ┌──────────────┐     ┌───────────────────┐   │
-│  │ Source Files  │────>│   Chunker    │────>│     ChromaDB      │   │
-│  │ (.py .js .ts) │     │ (AST+Regex)  │     │  (Vector Store)   │   │
-│  └──────────────┘     └──────────────┘     └─────────┬─────────┘   │
-│                                                       │             │
-│                     ┌─────────────────────────────────┤             │
-│                     │                                 │             │
-│               ┌─────▼──────┐   ┌──────────────┐  ┌───▼─────────┐  │
-│               │ MCP Server  │   │   Watcher    │  │     CLI      │  │
-│               │ (FastMCP)   │   │  (Watchdog)  │  │ (main.py)    │  │
-│               │  4 tools    │   │  Debounced   │  │ Questions    │  │
-│               └──────┬──────┘   └──────────────┘  └──────┬──────┘  │
-│                      │                                  │          │
-│               ┌──────▼──────┐                           │          │
-│               │  AI Agents  │<──────────────────────────┘          │
-│               │ (opencode / │                                      │
-│               │   Claude)   │                                      │
-│               └─────────────┘                                      │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Semantic Code Search Architecture                 │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────┐    ┌────────────────┐    ┌──────────┐             │
+│  │ Source Files  │───>│ Tree-sitter    │───>│ Embedder │             │
+│  │ (8+ langs)   │    │ Chunker        │    │ (sbert)  │             │
+│  └──────────────┘    └────────────────┘    └────┬─────┘             │
+│                                                  │                   │
+│                                            ┌─────▼─────┐            │
+│                                            │  LanceDB   │            │
+│                                            │ (vectors + │            │
+│                                            │  FTS idx)  │            │
+│                                            └─────┬─────┘            │
+│                                                  │                   │
+│                         ┌────────────────────────┼──────────┐        │
+│                         │                        │          │        │
+│                   ┌─────▼──────┐   ┌────────────▼───┐  ┌──▼───────┐ │
+│                   │ MCP Server │   │   Watcher      │  │   CLI    │ │
+│                   │ (FastMCP)  │   │  (Watchdog)    │  │ (click)  │ │
+│                   │  3 tools   │   │  debounced     │  │          │ │
+│                   └─────┬──────┘   └────────────────┘  └──────────┘ │
+│                         │                                             │
+│                   ┌─────▼──────┐                                     │
+│                   │  AI Agents │                                     │
+│                   │ Claude /   │                                     │
+│                   │ Cursor /   │                                     │
+│                   │ opencode   │                                     │
+│                   └────────────┘                                     │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Features
 
-- **Semantic search** -- find code using natural language queries, not keywords
-- **AST-aware chunking** -- Python files are split into functions/classes via the `ast` module; JS/TS files via regex
-- **Incremental updates** -- only re-indexes files that changed (MD5 hash comparison)
-- **Background watcher** -- monitors file changes with debounced, per-file updates via Watchdog
-- **MCP server** -- exposes index, search, list, and remove tools for AI agent integration
-- **Embedding cache** -- LRU cache avoids re-embedding repeated queries
-- **Benchmark suite** -- compares semantic search vs grep vs glob across 20 test queries
+- **Tree-sitter AST-aware chunking** for Python, JS/TS, Rust, Go, Java, C/C++
+- **Hybrid search** -- vector similarity + full-text search merged with Reciprocal Rank Fusion (RRF)
+- **Merkle tree incremental indexing** -- only re-indexes changed files via MD5 hash comparison
+- **Live file watching** with debounced (2s) per-file updates
+- **MCP server** for AI agent integration (Claude Code, Cursor, opencode)
+- **Secret scanning and redaction** -- AWS keys, JWTs, private keys, database URLs, high-entropy strings
+- **LanceDB encrypted at rest** via Fernet symmetric encryption with PBKDF2 key derivation
+- **One-command setup** with `.codeindex.yml` config auto-detection
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | Language | Python 3.11+ |
-| Vector DB | ChromaDB (local, persistent) |
-| Embeddings | `all-MiniLM-L6-v2` (via ChromaDB default) |
+| AST Parsing | Tree-sitter (8+ languages) |
+| Vector Store | LanceDB (local, persistent) |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2` or `nomic-embed-code`) |
 | MCP Server | FastMCP (`mcp[cli]`) |
 | File Watching | Watchdog |
-| Caching | `OrderedDict` LRU (embedder.py) |
-| Config | python-dotenv |
+| Config | YAML (`.codeindex.yml`) |
+| Encryption | `cryptography` (Fernet + PBKDF2) |
 | Testing | pytest |
 
 ## Quick Start
 
-### Install
-
 ```bash
 uv sync
-```
-
-### Index a Codebase
-
-```bash
-# Via CLI (indexes all codebases defined in main.py)
-uv run main.py
-
-# Via MCP tool (from an AI agent)
-index_codebase_tool(codebase_name="my_project", root_dir="./src")
-```
-
-### Search
-
-```bash
-# Via CLI (runs questions from questions.md)
-uv run main.py
-
-# Via MCP tool
-search_code_tool(query="Where is the authentication logic?", codebase_name="my_project")
-
-# Via Python
-from code_index import init_client, get_collection, search_code
-client = init_client("./code_index_db")
-collection = get_collection(client, "my_project_index")
-result = search_code("authentication logic", collection)
-```
-
-### Watch for Changes
-
-```bash
-# With CLI args
-uv run watcher.py --watch my_project=./src --watch other_project=./other
-
-# With config file
-uv run watcher.py --config watch_config.json
-```
-
-### Start the MCP Server
-
-```bash
-# Development mode
-uv run mcp dev server.py
-
-# Production
-uv run server.py
+uv run code-index           # interactive setup on first run, then MCP server
+uv run code-index index     # one-shot index
+uv run code-index search --query "auth logic" --codebase my_project
+uv run code-index setup     # re-run config setup
 ```
 
 ## Project Structure
 
 ```
-code_index/                 Core library
-  __init__.py               Re-exports public API
-  config.py                 Environment variable configuration (dotenv)
-  chunker.py                AST chunking (Python), regex chunking (JS/TS), file walker
-  embedder.py               Embedding function with LRU cache + warm-up
-  database.py               ChromaDB client, indexing, incremental updates (MD5)
-  search.py                 Semantic search with structured result formatting
-  parser.py                 Parses questions.md into per-codebase question lists
-  exporter.py               Writes search results to per-codebase markdown files
+code_index/                         Core library
+  __init__.py                       Re-exports public API
+  cli.py                            CLI entry point (click) -- serve, index, search, setup
+  config.py                         Environment variable configuration (dotenv)
+  config_loader.py                  YAML config loader -- walks up to git root
+  config_setup.py                   Interactive first-time setup wizard
+  chunker.py                        Tree-sitter chunking with process pool
+  embedder.py                       sentence-transformers with LRU cache + warm-up
+  database.py                       LanceDB client, indexing, Merkle tree change detection
+  search.py                         Hybrid search (vector + FTS) with Reciprocal Rank Fusion
+  watcher.py                        Background file watcher (Watchdog) -- debounced updates
+  secret_scanner.py                 Secret detection and redaction
+  encryption.py                     DB encryption at rest (Fernet + PBKDF2)
+  path_security.py                  Path validation and traversal prevention
+  parser.py                         Parses questions.md into per-codebase question lists
+  exporter.py                       Writes search results to per-codebase markdown files
+  parsers/
+    __init__.py                     TreeSitterParser -- Strategy pattern dispatcher
+    base.py                         ASTNode dataclass + LanguageParser ABC
+    python_parser.py                Python: functions, async functions, classes, methods
+    javascript_parser.py            JavaScript: functions, classes, arrow functions
+    typescript_parser.py            TypeScript: functions, classes, interfaces, types
+    rust_parser.py                  Rust: functions, impl methods, structs, enums, traits
+    go_parser.py                    Go: functions, methods (with receiver), structs, interfaces
+    java_parser.py                  Java: classes, methods, constructors, interfaces
+    cpp_parser.py                   C/C++: functions, classes, structs
+    languages.yaml                  Extension-to-language mapping
 
-server.py                   MCP server (FastMCP) -- 4 tools
-watcher.py                  Background file watcher (Watchdog) -- debounced updates
-main.py                     CLI entry point -- indexes codebases, runs questions
-benchmark.py                Semantic vs grep vs glob comparison (20 test queries)
-watch_config.json           Sample watcher configuration
-
-tests/                      28 pytest tests
-  test_chunker.py           Python AST chunking, JS/TS regex chunking, file walking
-  test_database.py          ChromaDB indexing, incremental updates, hash comparison
-  test_search.py            Semantic search, structured results, formatting
-  test_parser.py            Question file parsing (sections, mappings)
-
-questions.md                220 interview questions across 4 codebases
-test_codebase/              4 sample codebases for indexing and benchmarking
-  card_shop/                Pokemon TCG card shop (FastAPI backend)
-  card_collection/          Card collection manager
-  card_infrastructure/      TCGPlayer pricing database + eBay scraper
-  financial_visuals/        Financial data analysis and charts
+main.py                             Legacy MCP server entry point (still works)
+benchmark.py                        Benchmark tool -- semantic vs grep vs glob
+tests/                              70 pytest tests
+  test_chunker.py
+  test_database.py
+  test_search.py
+  test_parser.py
+  test_config.py
+  test_encryption.py
+  test_secret_scanner.py
+  test_path_security.py
 ```
 
 ## How It Works
 
-### Chunking (`code_index/chunker.py`)
+### Tree-sitter Chunking
 
-Python files are parsed with the `ast` module and split into individual functions, async functions, and classes. Chunks under 3 lines are skipped, and docstrings are prepended for context. JS/TS files are parsed with regex patterns that extract functions, classes, arrow functions, interfaces, and type aliases. Other files (`.md`, `.json`, `.sql`, `.txt`) are stored as whole files. File walking uses `ProcessPoolExecutor` with up to 8 workers for parallel chunking.
+Source files are parsed into ASTs via tree-sitter using a Strategy pattern -- each language has a dedicated parser class (`PythonParser`, `JavaScriptParser`, etc.) that extracts language-specific node types (functions, classes, methods, etc.). Chunks under 3 lines are skipped. Docstrings are prepended to their parent node for context. Files for unsupported languages are stored as whole files. File walking uses `ProcessPoolExecutor` with up to 8 workers for parallel chunking. Each chunk has a per-file timeout (30s) and a max file size limit (10MB).
 
-### Embedding (`code_index/embedder.py`)
+### Embedding
 
-Uses ChromaDB's built-in `all-MiniLM-L6-v2` embedding function with an LRU cache (`OrderedDict`) to avoid re-embedding repeated queries. The server calls `warm_up()` on startup to pre-load the model.
+Uses `sentence-transformers` with a configurable model (default `all-MiniLM-L6-v2`). An `OrderedDict`-based LRU cache avoids re-embedding repeated queries. The server calls `warm_up()` on startup to pre-load the model into memory. Supports offline mode and optional model SHA-256 verification.
 
-### Database (`code_index/database.py`)
+### Database
 
-Stores chunks in persistent ChromaDB collections named `{codebase_name}_index`. Each chunk's metadata includes an MD5 file hash for incremental update support. The `update_codebase` function walks the directory, compares hashes against stored metadata, and only re-indexes changed or new files.
+Chunks are stored in LanceDB tables named `{codebase_name}_index`. Each table has a full-text search index on the `text` column. A Merkle tree tracks per-file MD5 hashes and per-directory composite hashes. The `update_codebase` function builds the current tree, compares it against the saved state, and only re-indexes changed or new files. Unchanged files are skipped entirely.
 
-### Search (`code_index/search.py`)
+### Hybrid Search
 
-Queries are embedded and matched against stored vectors via L2 distance. Returns structured results with file path, line number, name, type, distance score, and source code. Lower distance indicates a better match.
+Vector similarity search and full-text search are run in parallel (3x candidates each), then merged using Reciprocal Rank Fusion (RRF, k=60). RRF assigns a score to each document: `sum(1 / (k + rank + 1))` across both result sets. The merged results are sorted by combined score and truncated to the requested count. Falls back to vector-only search if FTS is unavailable.
 
-### Watcher (`watcher.py`)
+### File Watching
 
-Uses Watchdog to monitor file system events with a configurable debounce timer (default 2 seconds). On startup, it full-indexes empty collections and runs incremental updates on existing ones. File modifications, creations, and deletions are handled per-file with automatic chunk cleanup and re-indexing.
+Watchdog monitors file system events with a 2-second debounce timer. Modifications, creations, and deletions are handled per-file -- old chunks are deleted and the file is re-chunked and re-embedded. The watcher runs as a daemon thread alongside the MCP server.
 
-### MCP Server (`server.py`)
+### Config
 
-Exposes 4 tools over the MCP protocol for AI agent integration. Pre-warms the embedding model on startup and caches collection references for performance.
+`.codeindex.yml` is auto-discovered by walking up from the current directory to the git root. On first run, an interactive setup wizard detects the git repo and offers to index it, the current directory, or manually entered paths. The config file specifies codebases (name + root), file extensions, and exclude patterns.
 
-## Configuration
+### Security
 
-Create a `.env` file (see `.env.example`):
+Path validation prevents directory traversal attacks. Secret scanning detects and redacts 25+ patterns including AWS keys, JWTs, private keys, and high-entropy strings. LanceDB can be encrypted at rest using Fernet symmetric encryption with PBKDF2 key derivation (480,000 iterations). See the [Security](#security) section below for full details.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CODE_INDEX_DB_PATH` | `./code_index_db` | Path to ChromaDB persistence directory |
-| `CODE_INDEX_N_RESULTS` | `3` | Default number of search results |
-| `CODE_INDEX_EXTENSIONS` | `.py,.js,.jsx,.ts,.tsx,.md,.txt,.json,.sql` | File extensions to index |
-| `CODE_INDEX_DEBOUNCE` | `2` | Watcher debounce time in seconds |
-| `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for query embeddings |
+## Supported Languages
 
-Watcher config (`watch_config.json`):
-
-```json
-{
-  "codebases": [
-    { "name": "my_project", "root": "./src" },
-    { "name": "other_project", "root": "./other" }
-  ]
-}
-```
+| Language | Chunking Strategy |
+|----------|-------------------|
+| Python | tree-sitter AST -- functions, async functions, classes, methods (with docstrings) |
+| JS/TS | tree-sitter AST -- functions, classes, methods, arrow functions, interfaces, types |
+| Rust | tree-sitter AST -- functions, impl methods, structs, enums, traits |
+| Go | tree-sitter AST -- functions, methods (with receiver), structs, interfaces |
+| Java | tree-sitter AST -- classes, methods, constructors, interfaces |
+| C/C++ | tree-sitter AST -- functions, classes, structs |
+| Other | Stored as whole file |
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `index_codebase_tool(codebase_name, root_dir)` | Full index of a directory (drops existing collection first) |
-| `search_code_tool(query, codebase_name, n_results=3)` | Semantic search returning top-N results |
-| `list_codebases()` | List all indexed collections with chunk counts |
-| `remove_codebase(codebase_name)` | Delete a codebase collection |
+| `search_code_tool(query, codebase_name, n_results=3)` | Hybrid search returning top-N results with file, line, name, type, score |
+| `list_codebases()` | List all indexed codebases with chunk counts |
+| `remove_codebase(codebase_name)` | Delete a codebase and its indexed data |
+
+## Configuration
+
+### `.codeindex.yml`
+
+```yaml
+codebases:
+  - name: my_project
+    root: ./src
+  - name: other_project
+    root: ./other
+
+extensions:
+  - .py
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .md
+  - .txt
+  - .json
+  - .sql
+
+exclude:
+  - node_modules
+  - .venv
+  - __pycache__
+  - .git
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODE_INDEX_DB_PATH` | `./code_index_db` | Path to LanceDB persistence directory |
+| `CODE_INDEX_N_RESULTS` | `3` | Default number of search results |
+| `CODE_INDEX_EXTENSIONS` | `.py,.js,.jsx,.ts,.tsx,.md,.txt,.json,.sql` | File extensions to index |
+| `CODE_INDEX_DEBOUNCE` | `2` | Watcher debounce time in seconds |
+| `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for query embeddings |
+| `CODE_INDEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model name |
+| `CODE_INDEX_EMBEDDING_MODEL_SHA256` | (empty) | Optional model hash for verification |
+| `CODE_INDEX_EMBEDDING_OFFLINE` | `false` | Use cached model, no downloads |
+| `CODE_INDEX_ALLOWED_DIRS` | (current dir) | Comma-separated list of allowed root directories |
+| `CODE_INDEX_MAX_FILE_SIZE_MB` | `10` | Max file size for chunking in MB |
+| `CODE_INDEX_DB_ENCRYPTION_KEY` | (auto-generated) | Fernet key for encryption at rest (auto-generated on `setup`) |
+| `CODE_INDEX_AUDIT_DIR` | (empty) | Directory for audit log files (enables audit logging when set) |
+
+## Testing
+
+```bash
+uv run pytest tests/ -v
+```
+
+70 tests covering:
+
+- **Chunking** -- tree-sitter AST splitting across all supported languages, docstrings, min-line filtering, process pool, timeouts
+- **Database** -- LanceDB initialization, indexing with file hashes, Merkle tree change detection, incremental updates
+- **Search** -- hybrid search, RRF merging, structured result formatting
+- **Parser** -- question file parsing, section extraction
+- **Config** -- YAML loading, config discovery, codebase resolution
+- **Encryption** -- Fernet encrypt/decrypt, key derivation, full DB encryption round-trip
+- **Path Security** -- directory traversal prevention, allowed directory enforcement
+- **Secret Scanning** -- pattern matching, entropy detection, redaction
+
+## Security
+
+> See [`security.md`](security.md) for the full threat model, design decisions, and operational guidance.
+
+### Key Security Features
+
+| Feature | Description |
+|---------|-------------|
+| **Encryption at rest** | LanceDB data encrypted with Fernet symmetric encryption (PBKDF2, 480k iterations). Encryption key is auto-generated on first `setup` run and stored in `.env`. |
+| **Secret scanning** | Detects and redacts 25+ secret patterns: AWS access/secret keys, JWTs, database URLs, GitHub/Slack/GitLab tokens, private keys, generic API keys, passwords, and high-entropy strings (Shannon entropy). |
+| **Input validation** | All MCP tool endpoints validate inputs — path traversal is blocked, codebase names are sanitized, and queries are length-checked. |
+| **Audit logging** | Optional audit trail of all MCP tool invocations, including timestamps, tool names, parameters, and results. Enable by setting `CODE_INDEX_AUDIT_DIR`. |
+| **Symlink protection** | Symlinks are resolved and validated against allowed directories before any file read or index operation. |
+| **Model integrity** | Optional SHA-256 verification of the embedding model to detect tampering or supply-chain attacks. Enable by setting `CODE_INDEX_EMBEDDING_MODEL_SHA256`. |
+
+### Security Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CODE_INDEX_DB_ENCRYPTION_KEY` | Fernet key for encryption at rest. **Auto-generated** by `uv run code-index setup` — no manual configuration needed. |
+| `CODE_INDEX_EMBEDDING_MODEL_SHA256` | Expected SHA-256 hash of the embedding model. Set to enable model integrity verification. |
+| `CODE_INDEX_AUDIT_DIR` | Path to a directory for audit log files. Audit logging is enabled when this variable is set. |
+| `CODE_INDEX_ALLOWED_DIRS` | Comma-separated list of directories the MCP server is permitted to access. Blocks access outside these roots. |
+| `CODE_INDEX_EMBEDDING_OFFLINE` | When `true`, uses only cached models — prevents unexpected downloads at runtime. |
 
 ## Benchmark Results
 
@@ -208,7 +264,7 @@ uv run benchmark.py
 
 Compares semantic search against grep and glob across all 220 questions from `questions.md` (196 with extractable targets). Results are exported to `benchmark_results.md`. Latest results:
 
-| Metric | Semantic (ChromaDB) | Grep | Glob |
+| Metric | Semantic (LanceDB) | Grep | Glob |
 |--------|---------------------|------|------|
 | Top-1 Accuracy | 41.3% (81/196) | 3.1% (6/196) | 3.1% (6/196) |
 | Top-3 Accuracy | 46.9% (92/196) | 7.7% (15/196) | 4.1% (8/196) |
@@ -216,24 +272,3 @@ Compares semantic search against grep and glob across all 220 questions from `qu
 | Avg Time (ms) | ~117 | ~70 | ~2.5 |
 
 Semantic search dramatically outperforms grep and glob on natural language queries. The 50% top-5 rate reflects the difficulty of the 220-question suite, which includes cross-project references, route definitions, and config lookups that require understanding context beyond a single codebase.
-
-## Testing
-
-```bash
-uv run pytest tests/ -v
-```
-
-28 tests covering:
-
-- **Chunking** (16 tests) -- Python AST splitting, JS/TS regex extraction, docstrings, syntax errors, min-line filtering, file walking, export patterns, interfaces, type aliases, class inheritance
-- **Database** (6 tests) -- client initialization, collection creation, indexing with file hashes, incremental updates for new/changed/unchanged files
-- **Search** (4 tests) -- structured result format, result keys, human-readable formatting, correct function retrieval
-- **Parser** (3 tests) -- question extraction, infrastructure section mapping, multiple codebase sections
-
-## Supported File Types
-
-| Extension | Chunking Strategy |
-|-----------|-------------------|
-| `.py` | AST -- functions, async functions, classes (with docstrings) |
-| `.js`, `.jsx`, `.ts`, `.tsx` | Regex -- functions, classes, arrow functions, interfaces, type aliases |
-| `.md`, `.txt`, `.json`, `.sql` | Stored as whole file |

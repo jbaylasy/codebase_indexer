@@ -52,14 +52,12 @@ benchmark_results.md
 # uv
 uv.lock
 
-# Markdown (except tracked docs)
+# Markdown (except README)
 *.md
 !README.md
-!questions.md
-!HANDOFF.md
-!SESSION_NOTES*.md
-!benchmark_ground_truth.json
+
+# Internal docs and session notes
+internal_docs/
 
 # Test fixtures
 test_codebase/
-agent_files/

@@ -1,19 +1,23 @@
 import os
-import sys
-import json
-import hashlib
-import argparse
-import threading
 import time
+import hashlib
+import threading
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from code_index.chunker import split_python_code, split_js_ts_code, get_file_paths
-from code_index.database import init_client, get_collection, index_codebase, update_codebase
+from code_index.chunker import split_with_treesitter
+from code_index.database import get_collection, update_codebase
 from code_index.embedder import embed_documents
+from code_index.secret_scanner import redact_chunk
+from code_index.path_security import is_safe_path
+from code_index.config import PERIODIC_REINDEX_SECONDS
 
-ALLOWED_EXTENSIONS = (".py", ".js", ".jsx", ".ts", ".tsx", ".md", ".txt", ".json", ".sql")
+ALLOWED_EXTENSIONS = (
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java",
+    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",
+    ".md", ".txt", ".json", ".sql",
+)
 DEBOUNCE_SECONDS = 2
 
 
@@ -23,21 +27,7 @@ def _chunk_file(file_path):
             content = f.read()
     except (OSError, IOError):
         return []
-
-    if file_path.endswith(".py"):
-        return split_python_code(content, file_path)
-    elif file_path.endswith((".js", ".jsx", ".ts", ".tsx")):
-        return split_js_ts_code(content, file_path)
-    else:
-        return [{
-            "text": content,
-            "metadata": {
-                "file": file_path,
-                "start_line": 1,
-                "type": "file",
-                "name": os.path.basename(file_path),
-            },
-        }]
+    return split_with_treesitter(content, file_path)
 
 
 def _delete_chunks_for_file(table, file_path):
@@ -62,10 +52,9 @@ def _find_codebase(file_path, codebases):
     return None
 
 
-class DebouncingHandler(FileSystemEventHandler):
-    def __init__(self, codebases, db_path):
+class _DebouncingHandler(FileSystemEventHandler):
+    def __init__(self, codebases):
         self.codebases = codebases
-        self.db_path = db_path
         self._pending = {}
         self._timer = None
         self._lock = threading.Lock()
@@ -98,7 +87,6 @@ class DebouncingHandler(FileSystemEventHandler):
     def _schedule(self, file_path, event_type):
         with self._lock:
             self._pending[file_path] = event_type
-
             if self._timer:
                 self._timer.cancel()
             self._timer = threading.Timer(DEBOUNCE_SECONDS, self._process_pending)
@@ -124,15 +112,20 @@ class DebouncingHandler(FileSystemEventHandler):
         if event_type == "deleted":
             removed = _delete_chunks_for_file(table, file_path)
             if removed:
-                print(f"[{cb['name']}] Deleted {removed} chunks for deleted file: {file_path}")
+                print(f"[watcher] [{cb['name']}] Deleted {removed} chunks: {file_path}")
                 self._processed += removed
             return
 
         if not os.path.exists(file_path):
             return
 
+        if os.path.islink(file_path):
+            if not is_safe_path(file_path, cb["root"]):
+                return
+
         removed = _delete_chunks_for_file(table, file_path)
-        chunks = _chunk_file(file_path)
+        raw_chunks = _chunk_file(file_path)
+        chunks = [redact_chunk(c) for c in raw_chunks]
 
         if not chunks:
             return
@@ -159,74 +152,14 @@ class DebouncingHandler(FileSystemEventHandler):
                 })
             table.add(records)
             action = "Updated" if removed else "Indexed"
-            print(f"[{cb['name']}] {action} {len(chunks)} chunks from: {file_path}")
+            print(f"[watcher] [{cb['name']}] {action} {len(chunks)} chunks: {file_path}")
             self._processed += len(chunks)
         except Exception as e:
-            print(f"[{cb['name']}] Error indexing {file_path}: {e}")
+            print(f"[watcher] [{cb['name']}] Error: {file_path}: {e}")
 
 
-def _init_codebases(db, codebases, db_path):
-    for cb in codebases:
-        name = cb["name"]
-        root = cb["root"]
-
-        print(f"\nInitializing codebase '{name}' at {root}")
-        table = get_collection(db, name)
-        cb["table"] = table
-
-        if table.count_rows() == 0:
-            print(f"  Table '{name}' is empty. Running full index...")
-            chunks = get_file_paths(root)
-            if chunks:
-                index_codebase(chunks, table, db_path=db_path, codebase_name=name)
-            else:
-                print(f"  No files found to index in {root}")
-        else:
-            print(f"  Table '{name}' has {table.count_rows()} chunks. Running incremental update...")
-            update_codebase(root, table, _chunk_file, db_path=db_path, codebase_name=name)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Background file watcher for code indexing")
-    parser.add_argument("--db", default="./code_index_db", help="Path to database directory")
-    parser.add_argument("--watch", action="append", metavar="NAME=PATH",
-                        help="Codebase to watch (format: name=/path/to/dir)")
-    parser.add_argument("--config", help="Path to JSON config file")
-    args = parser.parse_args()
-
-    codebases = []
-    db_path = args.db
-
-    if args.config:
-        try:
-            with open(args.config, "r") as f:
-                config = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            print(f"Error reading config file: {e}")
-            sys.exit(1)
-
-        for entry in config.get("codebases", []):
-            codebases.append({"name": entry["name"], "root": os.path.abspath(entry["root"])})
-    elif args.watch:
-        for item in args.watch:
-            if "=" not in item:
-                print(f"Invalid --watch format: '{item}'. Use name=path")
-                sys.exit(1)
-            name, path = item.split("=", 1)
-            codebases.append({"name": name, "root": os.path.abspath(path)})
-    else:
-        parser.error("Must specify --config or at least one --watch")
-
-    for cb in codebases:
-        if not os.path.isdir(cb["root"]):
-            print(f"Error: directory does not exist: {cb['root']}")
-            sys.exit(1)
-
-    print(f"Starting watcher with {len(codebases)} codebase(s)...")
-    db = init_client(db_path)
-    _init_codebases(db, codebases, db_path)
-
-    handler = DebouncingHandler(codebases, db_path)
+def start_watcher(codebases):
+    handler = _DebouncingHandler(codebases)
     observer = Observer()
 
     seen_roots = set()
@@ -235,22 +168,31 @@ def main():
         if real_root not in seen_roots:
             observer.schedule(handler, cb["root"], recursive=True)
             seen_roots.add(real_root)
-            print(f"\nWatching: {cb['root']} (as '{cb['name']}')")
+            print(f"[watcher] Watching: {cb['root']} (as '{cb['name']}')")
 
+    observer.daemon = True
     observer.start()
-    print("\nWatcher running. Press Ctrl+C to stop.\n")
+    return observer
 
-    try:
+
+def start_periodic_reindex(codebases, db_path, interval_seconds=None):
+    interval = interval_seconds if interval_seconds is not None else PERIODIC_REINDEX_SECONDS
+    if interval <= 0:
+        return None
+
+    def _reindex_loop():
         while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n\nStopping watcher...")
-        observer.stop()
-        print(f"Processed {handler._processed} chunk updates during this session.")
+            time.sleep(interval)
+            for cb in codebases:
+                try:
+                    table = cb["table"]
+                    root = cb["root"]
+                    name = cb["name"]
+                    update_codebase(root, table, split_with_treesitter, db_path=db_path, codebase_name=name)
+                except Exception as e:
+                    print(f"[reindex] [{name}] Error: {e}")
 
-    observer.join()
-    print("Watcher stopped.")
-
-
-if __name__ == "__main__":
-    main()
+    thread = threading.Thread(target=_reindex_loop, daemon=True, name="periodic-reindex")
+    thread.start()
+    print(f"[reindex] Periodic re-index every {interval}s")
+    return thread

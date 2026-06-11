@@ -123,7 +123,15 @@ def index_codebase(chunks, table, db_path=None, codebase_name=None):
             "file_hash": fh,
         })
     table.add(records)
+    _rebuild_fts_index(table)
     print(f"Added {len(records)} chunks to the database.")
+
+
+def _rebuild_fts_index(table):
+    try:
+        table.create_fts_index("text", replace=True)
+    except Exception:
+        pass
 
 
 def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=None):
@@ -169,6 +177,7 @@ def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=Non
                 "file_hash": current_tree.file_hashes.get(meta.get("file", ""), ""),
             })
         table.add(records)
+        _rebuild_fts_index(table)
         print(f"Indexed {len(new_chunks)} chunks from {len(files_to_reindex)} files "
               f"({len(new_files)} new, {len(changed_files)} changed, {unchanged_skipped} unchanged).")
 
