@@ -79,10 +79,35 @@ def _index_codebase(name, root):
 @click.pass_context
 def main(ctx):
     if ctx.invoked_subcommand is None:
-        ctx.invoke(serve)
+        print(ctx.get_help())
+        print()
+        print("  Use a subcommand or run with no arguments to start the MCP server.")
+        print()
+        print("  Examples:")
+        print("    code-index setup                    Interactive config wizard")
+        print("    code-index setup --dir ~/myproject  Config for a project in another dir")
+        print("    code-index serve                    Start MCP server with indexed code")
+        print("    code-index search --query \"find api\" --codebase myproject")
+        print()
 
 
-@main.command()
+@main.command(help="""
+Start the MCP server — index codebases, watch files, and serve search queries.
+
+Discovers codebases from .codeindex.yml in the current directory (walks up to
+git root). If no config is found, launches the interactive setup wizard.
+
+The server continuously watches files for changes and reindexes automatically.
+A periodic full reindex also runs every 300s (configurable).
+
+Examples:
+
+  code-index serve
+    Start the server using .codeindex.yml from cwd or git root.
+
+  cd ~/myproject && code-index serve
+    Serve a project by running from its directory.
+""")
 def serve():
     _startup()
     _init_embedder()
@@ -174,7 +199,19 @@ def serve():
     mcp.run()
 
 
-@main.command(name="index")
+@main.command(name="index", help="""
+Index or re-index codebases without starting the MCP server.
+
+Reads codebase configuration from .codeindex.yml, scans all files, chunks them
+using tree-sitter, and stores embeddings in LanceDB.
+
+Useful for batch indexing without the server overhead.
+
+Examples:
+
+  code-index index
+    Index all codebases defined in .codeindex.yml (found from cwd or git root).
+""")
 def index_cmd():
     _startup()
     _init_embedder()
@@ -187,18 +224,55 @@ def index_cmd():
         index_codebase(chunks, table, db_path=DB_PATH, codebase_name=cb["name"])
 
 
-@main.command()
-def setup():
-    run_setup()
+@main.command(help="""
+Interactive one-time setup wizard for a new project.
+
+Walks you through choosing a codebase directory, writes a .codeindex.yml config
+file and a .env with an encryption key. Run this once per project before
+code-index serve or code-index index.
+
+The config is saved in the current directory (or --dir if provided). Config
+auto-discovery walks up from cwd to find .codeindex.yml at runtime, so run
+serve/index from the same directory where you ran setup.
+
+Examples:
+
+  cd ~/myproject && code-index setup
+    Create .codeindex.yml for the project in ~/myproject.
+
+  code-index setup --dir ~/myproject
+    Same, but run from any directory by passing --dir.
+
+  code-index setup
+    Run from any directory and use option 3 to type paths manually.
+""")
+@click.option("-d", "--dir", "target_dir", default=None,
+              help="Target project directory. Config is saved here. Defaults to cwd.")
+def setup(target_dir):
+    run_setup(start_dir=target_dir)
 
 
-@main.command()
-@click.option("--query", required=True, help="Search query")
-@click.option("--codebase", "codebase_name", required=True, help="Codebase name to search")
-def search(query, codebase_name):
+@main.command(help="""
+Semantic code search against an indexed codebase.
+
+Performs hybrid search (vector + full-text) using Reciprocal Rank Fusion.
+Requires the codebase to be indexed first via code-index serve or code-index index.
+
+Results include file path, line number, function/class name, and relevance score.
+
+Examples:
+
+  code-index search --query "api endpoint handler" --codebase myproject
+
+  code-index search --query "database connection pool" --codebase myproject --n-results 5
+""")
+@click.option("--query", required=True, help="Natural language search query")
+@click.option("--codebase", "codebase_name", required=True, help="Codebase name (matches name: in .codeindex.yml)")
+@click.option("--n-results", "n_results", default=3, show_default=True, help="Number of results to return")
+def search(query, codebase_name, n_results):
     _startup()
     _init_embedder()
     table = _get_table(f"{codebase_name}_index")
-    result = search_code(query, table)
+    result = search_code(query, table, n_results)
     from code_index.search import format_results
     print(format_results(result))

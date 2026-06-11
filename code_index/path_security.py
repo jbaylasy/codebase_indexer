@@ -41,16 +41,17 @@ def validate_root_dir(path):
             raise ValueError(f"Path points to a sensitive directory: {path}")
 
     allowed_dirs = _config.ALLOWED_BASE_DIRS
-    allowed_found = False
-    for base in allowed_dirs:
-        base_resolved = str(Path(base).resolve()).rstrip(os.sep) + os.sep
-        if str(resolved).startswith(base_resolved.rstrip(os.sep)):
-            allowed_found = True
-            break
-    if not allowed_found:
-        raise ValueError(
-            f"Path '{path}' is outside allowed directories: {allowed_dirs}"
-        )
+    if allowed_dirs:
+        allowed_found = False
+        for base in allowed_dirs:
+            base_resolved = str(Path(base).resolve()).rstrip(os.sep) + os.sep
+            if str(resolved).startswith(base_resolved.rstrip(os.sep)):
+                allowed_found = True
+                break
+        if not allowed_found:
+            raise ValueError(
+                f"Path '{path}' is outside allowed directories: {allowed_dirs}"
+            )
 
     return str(resolved)
 

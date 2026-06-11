@@ -1,6 +1,160 @@
-# Semantic Code Search
+# code-index
 
-Local-first semantic code search engine with MCP server, live file watching, and AST-aware chunking via tree-sitter.
+Local-first semantic code search engine with tree-sitter AST chunking, hybrid search, live file watching, and an MCP server for AI agent integration.
+
+- **Understands code** — tree-sitter AST parsing extracts functions, classes, methods (not just raw text)
+- **Finds meaning** — semantic vector search combined with full-text via Reciprocal Rank Fusion (RRF)
+- **Stays fresh** — live file watcher + periodic Merkle-tree re-indexing
+- **Plugs into AI agents** — MCP server for Claude Code, Cursor, opencode and any MCP-compatible tool
+
+---
+
+## Quick Start
+
+### 1. Set up the project
+
+```bash
+git clone <repo>
+cd code-index
+uv sync
+```
+
+### 2. Configure a codebase to index
+
+Navigate to the project you want to index and run setup:
+
+```bash
+cd /path/to/your-project
+uv run /path/to/code-index/code-index setup
+```
+
+Or pass `--dir` from anywhere:
+
+```bash
+uv run /path/to/code-index/code-index setup --dir /path/to/your-project
+```
+
+The wizard writes two files:
+
+| File | Purpose |
+|------|---------|
+| `.codeindex.yml` | Codebase paths, file extensions, exclusion patterns |
+| `.env` | Encryption key for database-at-rest encryption |
+
+### 3. Index and search
+
+```bash
+# Start the server (indexes + watches + serves MCP queries)
+cd /path/to/your-project
+uv run /path/to/code-index/code-index serve
+
+# Or just index once (no server)
+uv run /path/to/code-index/code-index index
+
+# Search from the command line
+uv run /path/to/code-index/code-index search --query "api rate limiter" --codebase your-project
+```
+
+> Config auto-discovery walks up from the current directory to find `.codeindex.yml`, so always run `serve`/`index`/`search` from the directory where you ran `setup` (or a subdirectory of it).
+
+---
+
+## CLI Reference
+
+### `code-index` (no subcommand)
+
+Prints usage help with examples.
+
+### `code-index setup`
+
+Interactive wizard to create `.codeindex.yml` for a project.
+
+```bash
+code-index setup                   # configure the project in cwd
+code-index setup --dir ~/myproject # configure a project in another directory
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `-d`, `--dir` | Project directory (config is saved here). Defaults to cwd. |
+
+**Workflow:**
+
+1. Detects git root (for auto-option 1) or falls back to manual path entry.
+2. Prompts you to choose the codebase directory.
+3. Writes `.codeindex.yml` with the codebase definition.
+4. Generates a random encryption key and saves it to `.env`.
+
+### `code-index serve`
+
+Start the MCP server. Indexes codebases defined in `.codeindex.yml`, starts the file watcher, and listens for MCP search requests.
+
+```bash
+cd ~/myproject && code-index serve
+```
+
+**What happens:**
+
+1. Loads `.codeindex.yml` (walking up from cwd).
+2. If no config found, launches the interactive setup wizard.
+3. For each codebase:
+   - Full index if first run, incremental update otherwise.
+4. Starts the file watcher (2s debounce) for real-time updates.
+5. Starts periodic Merkle re-index (every 300s, configurable).
+6. Runs the MCP server (stdio transport, compatible with MCP clients).
+
+**When to use:** Development. Leave this running in a terminal while you work — it watches for file changes and keeps the index fresh.
+
+### `code-index index`
+
+One-shot indexing of all configured codebases. Does not start the MCP server or file watcher.
+
+```bash
+code-index index
+```
+
+**When to use:** CI pipelines, batch re-indexing, or pre-building the index before starting `serve`.
+
+### `code-index search`
+
+Command-line search against an indexed codebase. Requires the codebase to be indexed first.
+
+```bash
+code-index search --query "database connection pool" --codebase myproject
+code-index search --query "auth middleware" --codebase myproject --n-results 5
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--query` | Natural language search query (required) |
+| `--codebase` | Codebase name matching `name:` in `.codeindex.yml` (required) |
+| `--n-results` | Number of results (default: 3) |
+
+**Output:**
+
+```
+Query: "database connection pool"
+============================================================
+--- Result 1 ---
+File:   src/db/pool.py
+Line:   42
+Name:   ConnectionPool
+Type:   class
+Score:  0.6821
+Code:
+class ConnectionPool:
+    def __init__(self, min_size=5, max_size=20):
+        self._pool = []
+        self._min = min_size
+        self._max = max_size
+------------------------------------------------------------
+```
+
+---
 
 ## Architecture
 
@@ -21,106 +175,187 @@ graph TD
     K[CLI<br>click: serve/index/search/setup] --> H
 ```
 
-## Quick Start
+### Pipeline
 
-```bash
-uv sync
-uv run code-index           # interactive setup on first run, then MCP server
-uv run code-index index     # one-shot index
-uv run code-index search --query "auth logic" --codebase my_project
-uv run code-index setup     # re-run config setup
-```
+1. **Chunking** — Source files are parsed into AST nodes via tree-sitter (one parser per language). Each node (function, class, method) becomes a chunk. Oversized nodes are split at blank-line boundaries with the function signature prepended for context. Tiny chunks below the token minimum are dropped.
 
-## Key Features
+2. **Secret scanning** — Each chunk is scanned for 25+ regex patterns (AWS keys, JWTs, private keys, etc.) plus Shannon entropy checks. Matches are redacted before embedding.
 
-- **Tree-sitter AST chunking** for Python, JS/TS, Rust, Go, Java, C/C++ with smart splitting for oversized nodes
-- **Hybrid search** -- vector similarity + full-text search merged with Reciprocal Rank Fusion (RRF)
-- **Merkle tree incremental indexing** -- only re-indexes changed files
-- **Live file watching** with debounced (2s) per-file updates + periodic Merkle re-index fallback
-- **MCP server** for AI agent integration (Claude Code, Cursor, opencode)
-- **Secret scanning and redaction** -- AWS keys, JWTs, private keys, high-entropy strings
-- **Encrypted at rest** via Fernet + PBKDF2 (480k iterations)
-- **One-command setup** with `.codeindex.yml` auto-discovery
+3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached.
 
-## How It Works
+4. **Storage** — Vectors and metadata are stored in LanceDB with a full-text search (FTS) index over the chunk text.
 
-Source files are parsed into ASTs via tree-sitter using a Strategy pattern (one parser class per language). Each chunk is a semantically meaningful unit (function, class, method). Oversized nodes are split at blank-line boundaries with the signature prepended as context. Tiny chunks below the token minimum are filtered out.
+5. **Search** — Queries are embedded with the same model. Vector similarity + FTS results are merged via Reciprocal Rank Fusion (RRF, k=60).
 
-Chunks are embedded with `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) and stored in LanceDB with a full-text search index. Search runs vector + FTS in parallel, merged via RRF (k=60).
+6. **Incremental updates** — A Merkle tree tracks MD5 hashes per file. Changed/new files are re-chunked and re-embedded. The file watcher (watchdog, 2s debounce) catches real-time edits. A periodic full-tree scan runs every 300s as a safety net.
 
-A Merkle tree tracks per-file MD5 hashes for incremental updates. The file watcher reacts to changes in real-time (2s debounce), and a periodic re-index (every 5 min) catches anything the watcher misses.
+### Supported Languages
 
-## Supported Languages
-
-| Language | Nodes Extracted |
+| Language | Extracted Nodes |
 |----------|----------------|
 | Python | functions, async functions, classes, methods, docstrings |
-| JS/TS | functions, classes, arrow functions, interfaces, types |
+| JavaScript | functions, classes, arrow functions, methods |
+| TypeScript | functions, classes, arrow functions, methods, interfaces, types |
 | Rust | functions, impl methods, structs, enums, traits |
 | Go | functions, methods (receiver), structs, interfaces |
 | Java | classes, methods, constructors, interfaces |
-| C/C++ | functions, classes, structs |
+| C/C++ | functions, classes, structs, methods |
 | Other | Whole file |
 
-## MCP Tools
+---
 
-| Tool | Description |
-|------|-------------|
-| `search_code_tool(query, codebase_name, n_results=3)` | Hybrid search returning top-N results |
-| `list_codebases()` | List indexed codebases with chunk counts |
-| `remove_codebase(codebase_name)` | Delete a codebase and its data |
+## MCP Server (AI Agent Integration)
+
+The MCP server exposes three tools for MCP-compatible agents.
+
+### Tools
+
+| Tool | Parameters | Returns |
+|------|-----------|---------|
+| `search_code_tool` | `query` (str), `codebase_name` (str), `n_results` (int, default 3) | Formatted results: file, line, name, type, score, code snippet |
+| `list_codebases` | none | List of indexed codebase tables with chunk counts |
+| `remove_codebase` | `codebase_name` (str) | Confirmation string |
+
+### Integrating with AI Agents
+
+**Claude Code:**
+
+```bash
+claude mcp add code-index -- uv run --directory /path/to/code-index python -m code_index
+```
+
+**opencode:**
+
+```json
+{
+  "mcpServers": {
+    "code-index": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/code-index", "python", "-m", "code_index"]
+    }
+  }
+}
+```
+
+**Cursor:** Add as an MCP server in Cursor settings with the same command.
+
+---
 
 ## Configuration
 
-`.codeindex.yml` is auto-discovered by walking up to the git root:
+### `.codeindex.yml`
+
+Auto-discovered by walking up from cwd to the git root. Created by `code-index setup`.
 
 ```yaml
 codebases:
   - name: my_project
     root: ./src
+
 extensions:
   - .py
   - .js
   - .ts
+
 exclude:
   - node_modules
   - .venv
+  - __pycache__
 ```
+
+| Field | Description |
+|-------|-------------|
+| `codebases` | List of codebases to index. Each has a `name` (used in search) and `root` (directory path, absolute or relative to config). |
+| `extensions` | File extensions to include. Default: `.py .js .jsx .ts .tsx .md .txt .json .sql` |
+| `exclude` | Directory/pattern exclusions. Default: `node_modules .venv __pycache__ .git` |
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CODE_INDEX_DB_PATH` | `./code_index_db` | LanceDB persistence directory |
-| `CODE_INDEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model |
-| `CODE_INDEX_N_RESULTS` | `3` | Default search result count |
-| `CODE_INDEX_DEBOUNCE` | `2` | Watcher debounce (seconds) |
-| `CODE_INDEX_CHUNK_MAX_TOKENS` | `220` | Max tokens per chunk before splitting |
-| `CODE_INDEX_CHUNK_MIN_TOKENS` | `10` | Min tokens to keep a chunk |
-| `CODE_INDEX_PERIODIC_REINDEX_SECONDS` | `300` | Periodic Merkle re-index interval (0 to disable) |
+| `CODE_INDEX_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | HuggingFace model ID |
+| `CODE_INDEX_EMBEDDING_MODEL_SHA256` | (empty) | Verify model integrity on download |
+| `CODE_INDEX_EMBEDDING_OFFLINE` | `false` | Skip model download, use cached only |
+| `CODE_INDEX_N_RESULTS` | `3` | Default number of search results |
+| `CODE_INDEX_DEBOUNCE` | `2` | File watcher debounce in seconds |
+| `CODE_INDEX_CHUNK_MAX_TOKENS` | `220` | Max tokens per chunk (approximate, 4 chars/token) |
+| `CODE_INDEX_CHUNK_MIN_TOKENS` | `10` | Drop chunks below this token count |
+| `CODE_INDEX_CHARS_PER_TOKEN` | `4` | Character-to-token ratio for chunk sizing |
+| `CODE_INDEX_PERIODIC_REINDEX_SECONDS` | `300` | Full Merkle re-index interval (0 to disable) |
+| `CODE_INDEX_MAX_FILE_SIZE_MB` | `10` | Skip files larger than this |
 | `CODE_INDEX_DB_ENCRYPTION_KEY` | (auto-generated) | Fernet key for encryption at rest |
-| `CODE_INDEX_ALLOWED_DIRS` | (cwd) | Allowed root directories |
-| `CODE_INDEX_AUDIT_DIR` | (empty) | Enable audit logging when set |
+| `CODE_INDEX_ALLOWED_DIRS` | (cwd) | Restrict indexed paths (comma-separated). Empty = allow any non-sensitive path. |
+| `CODE_INDEX_AUDIT_DIR` | (disabled) | Directory for JSONL audit logs |
+| `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for the embedder |
 
-## Testing
+---
+
+## Security
+
+Built into every layer of the pipeline:
+
+| Layer | Mechanism |
+|-------|-----------|
+| Secret scanning | 25+ regex patterns + Shannon entropy (>=4.2 bits) redact secrets before embedding |
+| Encryption at rest | Fernet (AES-128-CBC) with PBKDF2 (480k iterations) for database files |
+| Path traversal prevention | Blocks `..` components, symlinks, and sensitive system directories (`/etc`, `/proc`, `~/.ssh`, etc.) |
+| Input sanitization | Query and codebase name validated against allowlisted patterns |
+| Model integrity | Optional SHA-256 verification of downloaded model weights |
+| Audit logging | Optional JSONL audit trail for searches, errors, and security events |
+
+---
+
+## Workflows
+
+### Live development with auto-reindexing
 
 ```bash
-uv run pytest tests/ -v
+# Terminal 1: Start the server
+cd ~/projects/my-app
+uv run /path/to/code-index/code-index serve
+
+# The server indexes everything, then watches for changes.
+# Any file edit triggers automatic re-chunking and re-embedding.
 ```
 
-87 tests covering chunking, database, search, config, encryption, path security, and secret scanning.
+### One-shot indexing (CI)
+
+```bash
+cd ~/projects/my-app
+uv run /path/to/code-index/code-index setup
+uv run /path/to/code-index/code-index index
+```
+
+### Search via CLI
+
+```bash
+cd ~/projects/my-app
+uv run /path/to/code-index/code-index search \
+  --query "how does the retry logic work" \
+  --codebase my-app \
+  --n-results 5
+```
+
+### Index multiple projects
+
+Edit `.codeindex.yml` to add multiple codebases:
+
+```yaml
+codebases:
+  - name: frontend
+    root: ./packages/frontend
+  - name: backend
+    root: ./packages/backend
+  - name: shared
+    root: ./packages/shared
+```
+
+---
 
 ## Benchmark Results
 
-Run the benchmark suite (220 natural language queries across 3 codebases):
-
-```bash
-uv run python -m code_index.benchmark
-```
-
-Compares semantic search vs grep vs glob. Results are written to `benchmark_results.md`.
-
-Latest results (June 2026, 220 questions, 3 codebases):
+220 natural language queries across 3 codebases:
 
 | Metric | Semantic (LanceDB) | Grep | Glob |
 |--------|---------------------|------|------|
@@ -129,8 +364,62 @@ Latest results (June 2026, 220 questions, 3 codebases):
 | Top-5 Accuracy | 86.2% (188/218) | 17.0% (37/218) | 16.1% (35/218) |
 | Avg Query Time | 15ms | 24ms | 2ms |
 
-Semantic search achieves 13x higher top-1 accuracy than grep on natural language queries.
+Run locally:
 
-## Security
+```bash
+uv run python -m code_index.benchmark
+```
 
-Built into every layer: encryption at rest (Fernet + PBKDF2), secret scanning (25+ patterns + Shannon entropy), path traversal prevention, input sanitization, symlink protection, optional audit logging, and optional model SHA-256 verification.
+---
+
+## Testing
+
+```bash
+uv run pytest tests/ -v
+```
+
+50+ tests covering chunking, database, search, config, encryption, path security, secret scanning, and audit logging.
+
+---
+
+## Development
+
+### Project Layout
+
+```
+code_index/
+├── cli.py             # Click CLI (serve/index/search/setup)
+├── config.py          # Environment variable bindings
+├── config_loader.py   # YAML config discovery and parsing
+├── config_setup.py    # Interactive setup wizard
+├── chunker.py         # Tree-sitter chunking + smart splitting
+├── database.py        # LanceDB client + Merkle tree indexer
+├── embedder.py        # sentence-transformers wrapper
+├── search.py          # Hybrid search (vector + FTS, RRF merge)
+├── watcher.py         # File watcher + periodic re-index daemon
+├── path_security.py   # Path traversal prevention
+├── query_sanitizer.py # Input validation
+├── encryption.py      # Fernet + PBKDF2 at-rest encryption
+├── secret_scanner.py  # Secret pattern detection + redaction
+├── audit.py           # Optional JSONL audit logging
+├── benchmark.py       # Benchmark runner
+└── parsers/           # Strategy-pattern tree-sitter parsers
+    ├── languages.yaml # Extension-to-language mapping
+    ├── base.py        # Abstract base parser
+    ├── python_parser.py
+    ├── javascript_parser.py
+    ├── typescript_parser.py
+    ├── rust_parser.py
+    ├── go_parser.py
+    ├── java_parser.py
+    ├── cpp_parser.py
+    └── c_parser.py
+```
+
+### Key Design Decisions
+
+- **Single entry point** — Everything runs through `code-index` CLI (Click). No separate scripts.
+- **Unified chunker** — `split_with_treesitter` is the only chunker. Used by all indexing paths.
+- **Config auto-discovery** — Walks up from cwd to git root, same as `.gitignore`.
+- **Lazy module loading** — Heavy imports (tree-sitter, sentence-transformers, lanceDB) load on demand; `setup` stays fast.
+- **Daemon threads** — File watcher + periodic re-index both run as daemon threads inside the MCP server process.
