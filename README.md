@@ -216,7 +216,7 @@ graph TD
 
 2. **Secret scanning** — Each chunk is scanned for 25+ regex patterns (AWS keys, JWTs, private keys, etc.) plus Shannon entropy checks. Matches are redacted before embedding.
 
-3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached.
+3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached. Batch size is configurable (`EMBEDDING_BATCH_SIZE`, default 256) — larger batches give 2–4× throughput on Apple Silicon AMX and x86 AVX2/AVX-512.
 
 4. **Storage** — Vectors and metadata are stored in LanceDB with a full-text search (FTS) index over the chunk text.
 
@@ -331,6 +331,7 @@ exclude:
 | `CODE_INDEX_ALLOWED_DIRS` | (cwd) | Restrict indexed paths (comma-separated). Empty = allow any non-sensitive path. |
 | `CODE_INDEX_AUDIT_DIR` | (disabled) | Directory for JSONL audit logs |
 | `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for the embedder |
+| `CODE_INDEX_EMBEDDING_BATCH_SIZE` | `256` | Embedding batch size. Larger = faster on modern CPUs (AMX, AVX-512). Lower if memory-constrained. |
 
 ---
 
