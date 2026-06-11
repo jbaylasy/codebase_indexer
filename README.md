@@ -16,10 +16,7 @@ git clone <url>
 cd codebase_indexer
 uv sync
 
-# Configure a project to index (required first step)
-uv run code-index setup ~/my-project   # or just `code-index setup` for interactive
-
-# Start the server — indexes everything and watches for changes
+# Start the server — if no config, launches setup wizard automatically
 uv run code-index serve
 
 # Search while the server runs (in another terminal)
@@ -38,28 +35,38 @@ cd codebase_indexer
 uv sync
 ```
 
-### 2. Configure a project
-
-```bash
-uv run code-index setup ~/my-project
-```
-
-This writes `.codeindex.yml` and `.env` in the current directory. The config tells
-`code-index` which project to index.
-
-### 3. Start the server
+### 2. Start the server
 
 ```bash
 uv run code-index serve
 ```
 
-On first run:
-1. The embedding model downloads (once, cached after).
-2. All source files in the configured project are parsed via tree-sitter, chunked into functions/classes/methods, and embedded into LanceDB.
-3. The MCP server starts, ready for search queries.
-4. A file watcher watches for edits and re-indexes automatically.
+On first run there's no config yet, so the interactive setup wizard starts:
 
-### 4. Search
+```
+No .codeindex.yml found. Let's set one up.
+
+==================================================
+  codeindex — first-time setup
+==================================================
+
+  Detected git repo: /home/you/codebase_indexer
+
+  Options:
+  1) Index git repo root (auto-detected)
+  2) Index current directory
+  3) Enter paths manually
+
+  Choose [1/2/3]:
+```
+
+Choose option 3 and type the path to the project you want to index (e.g. `~/my-project`).
+The wizard writes `.codeindex.yml` and `.env`, then the server proceeds to index
+everything and start listening for queries.
+
+On subsequent runs, the config already exists and `serve` starts immediately.
+
+### 3. Search
 
 While the server is running, query from another terminal:
 
@@ -69,9 +76,12 @@ uv run code-index search --query "database pool" --codebase my-project
 
 Or connect an AI agent (see MCP section below).
 
-### 5. Other commands
+### 4. Other commands
 
 ```bash
+# Configure a project non-interactively
+uv run code-index setup ~/my-project
+
 # One-shot index (no server)
 uv run code-index index
 
@@ -91,10 +101,11 @@ Prints usage help with examples.
 
 Start the MCP server — index codebases, watch files, and serve search queries.
 
-Requires a `.codeindex.yml` config (created by `code-index setup`).
+Reads `.codeindex.yml` from the current directory (walks up to git root).
+If no config is found, launches the interactive setup wizard automatically.
 
 ```bash
-code-index serve                         # start server
+code-index serve                         # start server (auto-setup if needed)
 code-index serve --transport sse --port 8080
 ```
 
@@ -108,10 +119,11 @@ code-index serve --transport sse --port 8080
 
 **What happens:**
 
-1. Indexes each codebase (full on first run, incremental after).
-2. Starts the file watcher (2s debounce) for real-time updates.
-3. Starts periodic Merkle re-index (every 300s, configurable).
-4. Runs the MCP server with the chosen transport.
+1. Loads config or launches setup wizard.
+2. Indexes each codebase (full on first run, incremental after).
+3. Starts the file watcher (2s debounce) for real-time updates.
+4. Starts periodic Merkle re-index (every 300s, configurable).
+5. Runs the MCP server with the chosen transport.
 
 Leave this running while you work — it watches for changes and keeps the index fresh.
 
@@ -119,7 +131,8 @@ Leave this running while you work — it watches for changes and keeps the index
 
 One-shot indexing without starting the server or file watcher.
 
-Requires a `.codeindex.yml` config (created by `code-index setup`).
+Reads `.codeindex.yml` from the current directory (walks up to git root).
+If no config is found, launches the interactive setup wizard automatically.
 
 ```bash
 code-index index
@@ -341,17 +354,24 @@ Built into every layer of the pipeline:
 ### Live development with auto-reindexing
 
 ```bash
-# One-time setup
-uv run code-index setup ~/projects/my-app
+# First time: start the server, it prompts for the project path
+uv run code-index serve
 
-# Start the server
+# Subsequent sessions: config exists, starts immediately
 uv run code-index serve
 ```
 
 ### One-shot indexing (CI)
 
 ```bash
-uv run code-index setup ~/projects/my-app
+echo "codebases:
+  - name: my-app
+    root: /path/to/app
+extensions:
+  - .py
+exclude:
+  - node_modules" > .codeindex.yml
+
 uv run code-index index
 ```
 

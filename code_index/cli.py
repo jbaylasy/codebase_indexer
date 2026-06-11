@@ -51,10 +51,8 @@ def _resolve_codebases():
     config_cbs = get_codebases_from_config()
     if config_cbs:
         return config_cbs
-    print("No .codeindex.yml found.", file=sys.stderr)
-    print("Run setup first to configure a project:", file=sys.stderr)
-    print(f"  {sys.argv[0]} setup ~/my-project", file=sys.stderr)
-    sys.exit(1)
+    print("No .codeindex.yml found. Let's set one up.\n")
+    return run_setup()
 
 
 def _init_embedder():
@@ -95,10 +93,8 @@ def main(ctx):
 Start the MCP server — index configured codebases, watch files, and serve
 search queries.
 
-Requires a .codeindex.yml config file in the current directory (walks up to
-git root). Create one with:
-
-  code-index setup ~/my-project
+Reads .codeindex.yml from the current directory (walks up to git root).
+If no config is found, launches the interactive setup wizard automatically.
 
 The server continuously watches files for changes and reindexes automatically.
 A periodic full reindex also runs every 300s (configurable).
@@ -243,10 +239,8 @@ def serve(transport, host, port):
 Index or re-index configured codebases without starting the MCP server or
 file watcher.
 
-Requires a .codeindex.yml config file in the current directory (walks up to
-git root). Create one with:
-
-  code-index setup ~/my-project
+Reads .codeindex.yml from the current directory (walks up to git root).
+If no config is found, launches the interactive setup wizard automatically.
 
 Useful for batch indexing or CI pipelines.
 """)
