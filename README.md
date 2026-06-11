@@ -4,37 +4,21 @@ Local-first semantic code search engine with MCP server, live file watching, and
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                    Semantic Code Search Architecture                 │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────────┐    ┌────────────────┐    ┌──────────┐             │
-│  │ Source Files  │───>│ Tree-sitter    │───>│ Embedder │             │
-│  │ (8+ langs)   │    │ Chunker        │    │ (sbert)  │             │
-│  └──────────────┘    └────────────────┘    └────┬─────┘             │
-│                                                  │                   │
-│                                            ┌─────▼─────┐            │
-│                                            │  LanceDB   │            │
-│                                            │ (vectors + │            │
-│                                            │  FTS idx)  │            │
-│                                            └─────┬─────┘            │
-│                                                  │                   │
-│                         ┌────────────────────────┼──────────┐        │
-│                         │                        │          │        │
-│                   ┌─────▼──────┐   ┌────────────▼───┐  ┌──▼───────┐ │
-│                   │ MCP Server │   │   Watcher      │  │   CLI    │ │
-│                   │ (FastMCP)  │   │  (Watchdog)    │  │ (click)  │ │
-│                   │  3 tools   │   │  debounced     │  │          │ │
-│                   └─────┬──────┘   └────────────────┘  └──────────┘ │
-│                         │                                             │
-│                   ┌─────▼──────┐                                     │
-│                   │  AI Agents │                                     │
-│                   │ Claude /   │                                     │
-│                   │ Cursor /   │                                     │
-│                   │ opencode   │                                     │
-│                   └────────────┘                                     │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    A[Source Files<br>8+ languages] --> B[Tree-sitter Chunker<br>AST-aware splitting]
+    B --> C[Secret Scanner<br>Redact before embedding]
+    C --> D[Embedder<br>sentence-transformers]
+    D --> E[LanceDB<br>vectors + FTS index]
+
+    F[File Watcher<br>Watchdog, 2s debounce] --> B
+    G[Periodic Re-index<br>Merkle tree fallback] --> B
+
+    H[MCP Server<br>FastMCP, 3 tools] --> I[Hybrid Search<br>Vector + FTS via RRF]
+    I --> E
+
+    J[AI Agents<br>Claude / Cursor / opencode] --> H
+    K[CLI<br>click: serve/index/search/setup] --> H
 ```
 
 ## Key Features
@@ -91,6 +75,8 @@ code_index/                         Core library
   path_security.py                  Path validation and traversal prevention
   parser.py                         Parses questions.md into per-codebase question lists
   exporter.py                       Writes search results to per-codebase markdown files
+  audit.py                          Optional audit logging for MCP tool invocations
+  query_sanitizer.py                Input validation and sanitization for MCP endpoints
   parsers/
     __init__.py                     TreeSitterParser -- Strategy pattern dispatcher
     base.py                         ASTNode dataclass + LanguageParser ABC
@@ -103,9 +89,7 @@ code_index/                         Core library
     cpp_parser.py                   C/C++: functions, classes, structs
     languages.yaml                  Extension-to-language mapping
 
-main.py                             Legacy MCP server entry point (still works)
-benchmark.py                        Benchmark tool -- semantic vs grep vs glob
-tests/                              70 pytest tests
+tests/                              87 pytest tests
   test_chunker.py
   test_database.py
   test_search.py
@@ -120,7 +104,7 @@ tests/                              70 pytest tests
 
 ### Tree-sitter Chunking
 
-Source files are parsed into ASTs via tree-sitter using a Strategy pattern -- each language has a dedicated parser class (`PythonParser`, `JavaScriptParser`, etc.) that extracts language-specific node types (functions, classes, methods, etc.). Chunks under 3 lines are skipped. Docstrings are prepended to their parent node for context. Files for unsupported languages are stored as whole files. File walking uses `ProcessPoolExecutor` with up to 8 workers for parallel chunking. Each chunk has a per-file timeout (30s) and a max file size limit (10MB).
+Source files are parsed into ASTs via tree-sitter using a Strategy pattern -- each language has a dedicated parser class (`PythonParser`, `JavaScriptParser`, etc.) that extracts language-specific node types (functions, classes, methods, etc.). Oversized nodes are split at blank-line boundaries with the function signature prepended as context. Chunks below the token minimum are filtered. Docstrings are prepended to their parent node for context. Files for unsupported languages are stored as whole files. File walking uses `ProcessPoolExecutor` with up to 8 workers for parallel chunking. Each chunk has a per-file timeout (30s) and a max file size limit (10MB).
 
 ### Embedding
 
@@ -218,7 +202,7 @@ exclude:
 uv run pytest tests/ -v
 ```
 
-70 tests covering:
+87 tests covering:
 
 - **Chunking** -- tree-sitter AST splitting across all supported languages, docstrings, min-line filtering, process pool, timeouts
 - **Database** -- LanceDB initialization, indexing with file hashes, Merkle tree change detection, incremental updates
@@ -231,7 +215,7 @@ uv run pytest tests/ -v
 
 ## Security
 
-> See [`security.md`](security.md) for the full threat model, design decisions, and operational guidance.
+> Security is built into every layer -- encryption at rest, secret scanning, path validation, input sanitization, and optional audit logging.
 
 ### Key Security Features
 
@@ -259,7 +243,7 @@ uv run pytest tests/ -v
 Run benchmarks with:
 
 ```bash
-uv run benchmark.py
+uv run python -m code_index.benchmark
 ```
 
 Compares semantic search against grep and glob across all 220 questions from `questions.md` (196 with extractable targets). Results are exported to `benchmark_results.md`. Latest results:
