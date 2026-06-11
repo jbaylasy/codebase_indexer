@@ -2,10 +2,15 @@ import os
 import hashlib
 import json
 from collections import OrderedDict
-from sentence_transformers import SentenceTransformer
-from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE, EMBEDDING_BATCH_SIZE
 
 _LOCAL_MODEL_DIR = os.path.join(os.path.expanduser("~"), ".cache", "code_index_models")
+os.makedirs(_LOCAL_MODEL_DIR, exist_ok=True)
+os.environ.setdefault("TRANSFORMERS_CACHE", _LOCAL_MODEL_DIR)
+os.environ.setdefault("HF_HOME", _LOCAL_MODEL_DIR)
+os.environ.setdefault("HF_HUB_CACHE", _LOCAL_MODEL_DIR)
+
+from sentence_transformers import SentenceTransformer
+from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE, EMBEDDING_BATCH_SIZE
 
 _model = None
 _cache = None
@@ -55,11 +60,12 @@ def init_embedder(cache_size=512, model_name=None):
     global _model, _cache, _cache_size
     if _model is None:
         name = model_name or EMBEDDING_MODEL
-        os.makedirs(_LOCAL_MODEL_DIR, exist_ok=True)
-        os.environ.setdefault("TRANSFORMERS_CACHE", _LOCAL_MODEL_DIR)
-        os.environ.setdefault("HF_HOME", _LOCAL_MODEL_DIR)
-        os.environ.setdefault("HF_HUB_CACHE", _LOCAL_MODEL_DIR)
-        kwargs = {}
+        kwargs = {"cache_folder": _LOCAL_MODEL_DIR}
+        if EMBEDDING_OFFLINE:
+            kwargs["cache_folder"] = os.environ.get(
+                "TRANSFORMERS_CACHE",
+                _LOCAL_MODEL_DIR,
+            )
         _model = SentenceTransformer(name, **kwargs)
         _verify_model_hash(_model)
     _cache_size = cache_size
