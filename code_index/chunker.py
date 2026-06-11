@@ -250,6 +250,10 @@ def get_file_paths(root_dir, max_workers=None):
         return all_chunks
 
     all_chunks = []
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(_chunk_file, fp): fp for fp in file_paths}
         for future in as_completed(futures):
