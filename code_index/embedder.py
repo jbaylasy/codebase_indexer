@@ -3,7 +3,7 @@ import hashlib
 import json
 from collections import OrderedDict
 from sentence_transformers import SentenceTransformer
-from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE
+from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE, EMBEDDING_BATCH_SIZE
 
 _LOCAL_MODEL_DIR = os.path.join(os.path.expanduser("~"), ".cache", "code_index_models")
 
@@ -84,7 +84,7 @@ def embed_documents(texts):
     global _model
     if _model is None:
         init_embedder()
-    return _model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
+    return _model.encode(texts, normalize_embeddings=True, show_progress_bar=True, batch_size=EMBEDDING_BATCH_SIZE)
 
 
 def warm_up():
