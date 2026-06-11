@@ -53,8 +53,12 @@ class MerkleTree:
             full = os.path.join(directory, entry)
             if entry.startswith("."):
                 continue
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
             if os.path.isfile(full):
-                h = _hash_file(full)
+                h = f"{st.st_mtime:.6f}:{st.st_size}"
                 self.file_hashes[full] = h
                 entries.append(h)
             elif os.path.isdir(full):
