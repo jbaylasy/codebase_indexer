@@ -55,10 +55,23 @@ def _discover_codebases():
     codebases = get_codebases_from_config()
     if codebases:
         return {cb["name"]: cb["root"] for cb in codebases}
+    test_dir = "test_codebase"
+    if os.path.isdir(test_dir):
+        return {
+            d: os.path.join(test_dir, d)
+            for d in sorted(os.listdir(test_dir))
+            if os.path.isdir(os.path.join(test_dir, d)) and not d.startswith(".")
+        }
     return {}
 
 
 def _load_questions(path="questions.md"):
+    section_map = {
+        "card shop": "card_shop",
+        "card collection": "card_collection",
+        "infrastructure": "card_infrastructure",
+        "scripts": "card_infrastructure",
+    }
     questions = {}
     current = None
     if not os.path.exists(path):
@@ -67,9 +80,13 @@ def _load_questions(path="questions.md"):
         for line in f:
             line = line.strip()
             if line.startswith("# ") and not line.startswith("## "):
-                current = re.sub(r'[^\w\s]', '', line.lstrip("# ")).strip().lower().replace(" ", "_")
-                if current not in questions:
-                    questions[current] = []
+                name = re.sub(r'[^\w\s]', '', line.lstrip("# ")).strip().lower()
+                for key, mapped in section_map.items():
+                    if key in name:
+                        current = mapped
+                        if current not in questions:
+                            questions[current] = []
+                        break
                 continue
             match = re.match(r'^\d+\.\s+(.+)', line)
             if match and current:

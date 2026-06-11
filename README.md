@@ -120,16 +120,16 @@ uv run python -m code_index.benchmark
 
 Compares semantic search vs grep vs glob. Results are written to `benchmark_results.md`.
 
-Latest results:
+Latest results (June 2026, 220 questions, 3 codebases):
 
 | Metric | Semantic (LanceDB) | Grep | Glob |
 |--------|---------------------|------|------|
-| Top-1 Accuracy | 76.1% (166/218) | 4.1% (9/218) | 9.2% (20/218) |
-| Top-3 Accuracy | 85.3% (186/218) | 10.1% (22/218) | 11.5% (25/218) |
-| Top-5 Accuracy | 87.2% (190/218) | 14.7% (32/218) | 12.4% (27/218) |
-| Avg Query Time | 15ms | 62ms | 2ms |
+| Top-1 Accuracy | 67.0% (146/218) | 5.0% (11/218) | 10.6% (23/218) |
+| Top-3 Accuracy | 83.5% (182/218) | 11.9% (26/218) | 14.7% (32/218) |
+| Top-5 Accuracy | 86.2% (188/218) | 17.0% (37/218) | 16.1% (35/218) |
+| Avg Query Time | 15ms | 24ms | 2ms |
 
-Semantic search achieves 18x higher top-1 accuracy than grep on natural language queries.
+Semantic search achieves 13x higher top-1 accuracy than grep on natural language queries.
 
 ## Security
 
