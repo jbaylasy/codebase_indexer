@@ -11,51 +11,73 @@ Local-first semantic code search engine with tree-sitter AST chunking, hybrid se
 
 ## Quick Start
 
-### 1. Set up the project
+```bash
+# Install
+git clone <repo-url> ~/code-index
+cd ~/code-index
+uv sync
+
+# Index and serve any project — one command, no config needed
+uv run ~/code-index/code-index serve ~/my-project
+
+# Search while the server runs (in another terminal)
+uv run ~/code-index/code-index search --query "api rate limiter" --codebase my-project
+```
+
+That covers 90% of use cases. For custom file extensions, exclusions, or multiple
+codebases, see `code-index setup` below.
+
+---
+
+## Usage Guide
+
+### 1. Install
 
 ```bash
-git clone <repo>
-cd code-index
+git clone <repo-url> ~/code-index
+cd ~/code-index
 uv sync
 ```
 
-### 2. Configure a codebase to index
+Now `code-index` is ready. You can point it at any project on your machine.
 
-Navigate to the project you want to index and run setup:
-
-```bash
-cd /path/to/your-project
-uv run /path/to/code-index/code-index setup
-```
-
-Or pass `--dir` from anywhere:
+### 2. Index and serve a project
 
 ```bash
-uv run /path/to/code-index/code-index setup --dir /path/to/your-project
+uv run ~/code-index/code-index serve ~/my-project
 ```
 
-The wizard writes two files:
+That's it. One command:
+1. The embedding model downloads (once, cached after).
+2. All source files in `~/my-project` are parsed via tree-sitter, chunked into functions/classes/methods, and embedded into LanceDB.
+3. The MCP server starts, ready for search queries.
+4. A file watcher watches for edits and re-indexes automatically.
 
-| File | Purpose |
-|------|---------|
-| `.codeindex.yml` | Codebase paths, file extensions, exclusion patterns |
-| `.env` | Encryption key for database-at-rest encryption |
+No config file needed. To customize (extensions, exclusions, multi-project), see `code-index setup`.
 
-### 3. Index and search
+### 3. Search
+
+While the server is running, query from another terminal:
 
 ```bash
-# Start the server (indexes + watches + serves MCP queries)
-cd /path/to/your-project
-uv run /path/to/code-index/code-index serve
-
-# Or just index once (no server)
-uv run /path/to/code-index/code-index index
-
-# Search from the command line
-uv run /path/to/code-index/code-index search --query "api rate limiter" --codebase your-project
+cd ~/code-index
+uv run code-index search --query "database pool" --codebase my-project
 ```
 
-> Config auto-discovery walks up from the current directory to find `.codeindex.yml`, so always run `serve`/`index`/`search` from the directory where you ran `setup` (or a subdirectory of it).
+Or connect an AI agent (see MCP section below).
+
+### 4. Other commands
+
+```bash
+# One-shot index (no server)
+uv run ~/code-index/code-index index ~/my-project
+
+# Create a config file for custom settings
+uv run ~/code-index/code-index setup ~/my-project
+
+# SSE server on a custom port
+uv run ~/code-index/code-index serve ~/my-project --transport sse --port 8080
+```
 
 ---
 
@@ -65,61 +87,48 @@ uv run /path/to/code-index/code-index search --query "api rate limiter" --codeba
 
 Prints usage help with examples.
 
-### `code-index setup`
+### `code-index serve [PATH]`
 
-Interactive wizard to create `.codeindex.yml` for a project.
+Start the MCP server — index codebases, watch files, and serve search queries.
 
 ```bash
-code-index setup                   # configure the project in cwd
-code-index setup --dir ~/myproject # configure a project in another directory
+code-index serve ~/my-project          # index and serve (no config needed)
+code-index serve                        # use .codeindex.yml from cwd
+code-index serve ~/my-project --transport sse --port 8080
 ```
 
-**Options:**
+**Arguments & Options:**
 
 | Flag | Description |
 |------|-------------|
-| `-d`, `--dir` | Project directory (config is saved here). Defaults to cwd. |
-
-**Workflow:**
-
-1. Detects git root (for auto-option 1) or falls back to manual path entry.
-2. Prompts you to choose the codebase directory.
-3. Writes `.codeindex.yml` with the codebase definition.
-4. Generates a random encryption key and saves it to `.env`.
-
-### `code-index serve`
-
-Start the MCP server. Indexes codebases defined in `.codeindex.yml`, starts the file watcher, and listens for MCP search requests.
-
-```bash
-cd ~/myproject && code-index serve
-```
+| `PATH` | Directory to index (positional, optional). Default: use `.codeindex.yml`. |
+| `--transport` | `stdio` (default), `sse`, or `streamable-http` |
+| `--host` | Bind address for SSE/HTTP (default: 127.0.0.1) |
+| `--port` | Port for SSE/HTTP (default: 8000) |
 
 **What happens:**
 
-1. Loads `.codeindex.yml` (walking up from cwd).
-2. If no config found, launches the interactive setup wizard.
-3. For each codebase:
-   - Full index if first run, incremental update otherwise.
-4. Starts the file watcher (2s debounce) for real-time updates.
-5. Starts periodic Merkle re-index (every 300s, configurable).
-6. Runs the MCP server (stdio transport, compatible with MCP clients).
+1. Indexes each codebase (full on first run, incremental after).
+2. Starts the file watcher (2s debounce) for real-time updates.
+3. Starts periodic Merkle re-index (every 300s, configurable).
+4. Runs the MCP server with the chosen transport.
 
-**When to use:** Development. Leave this running in a terminal while you work — it watches for file changes and keeps the index fresh.
+Leave this running while you work — it watches for changes and keeps the index fresh.
 
-### `code-index index`
+### `code-index index [PATH]`
 
-One-shot indexing of all configured codebases. Does not start the MCP server or file watcher.
+One-shot indexing without starting the server or file watcher.
 
 ```bash
-code-index index
+code-index index ~/my-project           # index by path
+code-index index                         # use .codeindex.yml from cwd
 ```
 
-**When to use:** CI pipelines, batch re-indexing, or pre-building the index before starting `serve`.
+**When to use:** CI pipelines, or pre-building the index before serving.
 
-### `code-index search`
+### `code-index search --query Q --codebase NAME`
 
-Command-line search against an indexed codebase. Requires the codebase to be indexed first.
+Command-line search against an indexed codebase.
 
 ```bash
 code-index search --query "database connection pool" --codebase myproject
@@ -131,7 +140,7 @@ code-index search --query "auth middleware" --codebase myproject --n-results 5
 | Flag | Description |
 |------|-------------|
 | `--query` | Natural language search query (required) |
-| `--codebase` | Codebase name matching `name:` in `.codeindex.yml` (required) |
+| `--codebase` | Codebase name (required) |
 | `--n-results` | Number of results (default: 3) |
 
 **Output:**
@@ -153,6 +162,17 @@ class ConnectionPool:
         self._max = max_size
 ------------------------------------------------------------
 ```
+
+### `code-index setup [PATH]`
+
+Create a config file for advanced usage (custom extensions, exclusions, multiple codebases).
+
+```bash
+code-index setup ~/my-project          # create config for a project
+code-index setup                        # create config for cwd
+```
+
+Writes `.codeindex.yml` and `.env` in the project directory. Once the config exists, `serve` and `index` can run without PATH.
 
 ---
 

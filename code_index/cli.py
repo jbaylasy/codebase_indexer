@@ -47,12 +47,20 @@ def _get_table(name):
     return _tables[name]
 
 
-def _resolve_codebases():
+def _resolve_codebases(target_dir=None):
+    if target_dir:
+        name = os.path.basename(os.path.abspath(target_dir))
+        return [{"name": name, "root": os.path.abspath(target_dir)}]
     config_cbs = get_codebases_from_config()
     if config_cbs:
         return config_cbs
-    print("No .codeindex.yml found. Let's set one up.\n")
-    return run_setup()
+    print("No .codeindex.yml found.", file=sys.stderr)
+    print("Pass a directory to serve/index:", file=sys.stderr)
+    print(f"  {sys.argv[0]} serve ~/my-project", file=sys.stderr)
+    print(f"  {sys.argv[0]} index ~/my-project", file=sys.stderr)
+    print("Or run setup to create a config:", file=sys.stderr)
+    print(f"  {sys.argv[0]} setup ~/my-project", file=sys.stderr)
+    sys.exit(1)
 
 
 def _init_embedder():
@@ -81,37 +89,52 @@ def main(ctx):
     if ctx.invoked_subcommand is None:
         print(ctx.get_help())
         print()
-        print("  Use a subcommand or run with no arguments to start the MCP server.")
-        print()
         print("  Examples:")
-        print("    code-index setup                    Interactive config wizard")
-        print("    code-index setup --dir ~/myproject  Config for a project in another dir")
-        print("    code-index serve                    Start MCP server with indexed code")
-        print("    code-index search --query \"find api\" --codebase myproject")
+        print("    code-index serve ~/my-project       Index and serve a project")
+        print("    code-index index ~/my-project       One-shot index")
+        print("    code-index setup ~/my-project       Create config file")
+        print("    code-index search --query <q> --codebase <name>")
         print()
 
 
 @main.command(help="""
 Start the MCP server — index codebases, watch files, and serve search queries.
 
-Discovers codebases from .codeindex.yml in the current directory (walks up to
-git root). If no config is found, launches the interactive setup wizard.
+If PATH is given, indexes that directory with default settings and no config
+file needed. Otherwise looks for .codeindex.yml in the current directory
+(walks up to git root).
 
 The server continuously watches files for changes and reindexes automatically.
 A periodic full reindex also runs every 300s (configurable).
 
+Transport modes:
+  stdio (default)     MCP over stdio. Connect via claude mcp add or
+                      your MCP client's command config.
+
+  sse                 SSE transport at http://HOST:PORT/sse.
+
+  streamable-http     HTTP streaming at http://HOST:PORT/mcp.
+
 Examples:
 
-  code-index serve
-    Start the server using .codeindex.yml from cwd or git root.
+  code-index serve ~/my-project
+    Index and serve a project by path. No config needed.
 
-  cd ~/myproject && code-index serve
-    Serve a project by running from its directory.
+  cd ~/my-project && code-index serve
+    Serve the current directory (looks for .codeindex.yml).
+
+  code-index serve --transport sse --port 8080 ~/my-project
+    SSE server on port 8080.
 """)
-def serve():
+@click.argument("path", default=None, required=False)
+@click.option("--transport", default="stdio", show_default=True,
+              type=click.Choice(["stdio", "sse", "streamable-http"]))
+@click.option("--host", default=None, help="Bind address for SSE/HTTP transports (default: 127.0.0.1)")
+@click.option("--port", default=None, type=int, help="Port for SSE/HTTP transports (default: 8000)")
+def serve(path, transport, host, port):
     _startup()
     _init_embedder()
-    codebases = _resolve_codebases()
+    codebases = _resolve_codebases(target_dir=path)
     watcher_codebases = []
 
     for cb in codebases:
@@ -126,8 +149,33 @@ def serve():
         watcher.start_watcher(watcher_codebases)
         watcher.start_periodic_reindex(watcher_codebases, DB_PATH)
 
-    mcp = FastMCP("code_index")
+    mcp_kwargs = {"name": "code_index"}
+    if host:
+        mcp_kwargs["host"] = host
+    if port:
+        mcp_kwargs["port"] = port
+    mcp = FastMCP(**mcp_kwargs)
     init_audit_log()
+
+    effective_host = host or "127.0.0.1"
+    effective_port = port or 8000
+    print(file=sys.stderr)
+    print("  MCP server ready", file=sys.stderr)
+    if transport == "stdio":
+        print("  Transport: stdio", file=sys.stderr)
+        print(file=sys.stderr)
+        print("  Connect from another process:", file=sys.stderr)
+        print(f"    claude mcp add code-index -- uv run --directory {os.getcwd()} python -m code_index", file=sys.stderr)
+        print(file=sys.stderr)
+        print("  Or use the search command directly:", file=sys.stderr)
+        print(f"    cd {os.getcwd()} && uv run code-index search --query <query> --codebase <name>", file=sys.stderr)
+    else:
+        suffix = "/sse" if transport == "sse" else "/mcp"
+        print(f"  Transport: {transport}", file=sys.stderr)
+        print(f"  URL:       http://{effective_host}:{effective_port}{suffix}", file=sys.stderr)
+        print(file=sys.stderr)
+        print("  Connect your MCP client to this URL.", file=sys.stderr)
+    print(file=sys.stderr)
 
     @mcp.tool()
     def search_code_tool(query: str, codebase_name: str, n_results: int = 3) -> str:
@@ -196,26 +244,31 @@ def serve():
             log_error("remove_codebase", type(e).__name__)
             return "Error: could not remove codebase"
 
-    mcp.run()
+    mcp.run(transport=transport)
 
 
 @main.command(name="index", help="""
 Index or re-index codebases without starting the MCP server.
 
-Reads codebase configuration from .codeindex.yml, scans all files, chunks them
-using tree-sitter, and stores embeddings in LanceDB.
+If PATH is given, indexes that directory with default settings and no config
+file needed. Otherwise looks for .codeindex.yml in the current directory
+(walks up to git root).
 
-Useful for batch indexing without the server overhead.
+Useful for batch indexing or CI pipelines.
 
 Examples:
 
-  code-index index
-    Index all codebases defined in .codeindex.yml (found from cwd or git root).
+  code-index index ~/my-project
+    Index a project by path. No config needed.
+
+  cd ~/my-project && code-index index
+    Index using .codeindex.yml from the project directory.
 """)
-def index_cmd():
+@click.argument("path", default=None, required=False)
+def index_cmd(path):
     _startup()
     _init_embedder()
-    codebases = _resolve_codebases()
+    codebases = _resolve_codebases(target_dir=path)
     for cb in codebases:
         root = validate_root_dir(cb["root"])
         table = get_collection(_get_db(), f"{cb['name']}_index")
@@ -225,31 +278,26 @@ def index_cmd():
 
 
 @main.command(help="""
-Interactive one-time setup wizard for a new project.
+Set up a project for indexing.
 
-Walks you through choosing a codebase directory, writes a .codeindex.yml config
-file and a .env with an encryption key. Run this once per project before
-code-index serve or code-index index.
+Writes a .codeindex.yml config file and a .env with an encryption key in the
+project directory. This is optional — you can pass a PATH directly to
+code-index serve or code-index index without any setup.
 
-The config is saved in the current directory (or --dir if provided). Config
-auto-discovery walks up from cwd to find .codeindex.yml at runtime, so run
-serve/index from the same directory where you ran setup.
+The config file lets you customize extensions, exclusions, and index multiple
+codebases. Config auto-discovery walks up from cwd to find .codeindex.yml.
 
 Examples:
 
-  cd ~/myproject && code-index setup
-    Create .codeindex.yml for the project in ~/myproject.
+  code-index setup ~/my-project
+    Create .codeindex.yml and .env in ~/my-project.
 
-  code-index setup --dir ~/myproject
-    Same, but run from any directory by passing --dir.
-
-  code-index setup
-    Run from any directory and use option 3 to type paths manually.
+  cd ~/my-project && code-index setup
+    Same, using current directory.
 """)
-@click.option("-d", "--dir", "target_dir", default=None,
-              help="Target project directory. Config is saved here. Defaults to cwd.")
-def setup(target_dir):
-    run_setup(start_dir=target_dir)
+@click.argument("path", default=None, required=False)
+def setup(path):
+    run_setup(start_dir=path)
 
 
 @main.command(help="""
