@@ -100,7 +100,7 @@ def _load_merkle_state(db_path, codebase_name):
     return None
 
 
-def index_codebase(chunks, table, db_path=None, codebase_name=None):
+def index_codebase(chunks, table, db_path=None, codebase_name=None, merkle_tree=None):
     if not chunks:
         return
     from code_index.embedder import embed_documents
@@ -132,6 +132,8 @@ def index_codebase(chunks, table, db_path=None, codebase_name=None):
         table.add(records)
         print(f"  Batch {start // batch_size + 1}/{(total + batch_size - 1) // batch_size}: {len(records)} chunks written")
     _rebuild_fts_index(table)
+    if merkle_tree:
+        _save_merkle_state(db_path or "./code_index_db", codebase_name or "unknown", merkle_tree)
     print(f"  Done — {total} chunks indexed.")
 
 

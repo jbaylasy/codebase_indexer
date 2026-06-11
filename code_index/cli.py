@@ -69,11 +69,15 @@ def _index_codebase(name, root):
         print(f"[{name}] Chunking files...")
         chunks = get_file_paths(root)
         print(f"[{name}] Full index: {len(chunks)} chunks from {root}")
-        index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name)
+        from code_index.database import MerkleTree
+        merkle_tree = MerkleTree(root)
+        index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name, merkle_tree=merkle_tree)
     else:
         print(f"[{name}] Checking for changes...")
+        import time
+        t0 = time.time()
         update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name)
-        print(f"[{name}] Incremental update done ({table.count_rows()} chunks)")
+        print(f"[{name}] Incremental update done ({table.count_rows()} chunks, {time.time() - t0:.1f}s)")
     return table
 
 

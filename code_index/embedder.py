@@ -25,7 +25,6 @@ _cache_size = 512
 
 def _verify_model_hash(model):
     if not EMBEDDING_MODEL_SHA256:
-        print("Warning: CODE_INDEX_EMBEDDING_MODEL_SHA256 not set. Model integrity cannot be verified.")
         return True
     model_dir = model[0].folder if hasattr(model, '__iter__') else None
     if model_dir is None:
