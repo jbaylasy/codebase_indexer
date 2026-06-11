@@ -66,10 +66,12 @@ def _index_codebase(name, root):
     table = _get_table(tbl_name)
 
     if table.count_rows() == 0:
+        print(f"[{name}] Chunking files...")
         chunks = get_file_paths(root)
         print(f"[{name}] Full index: {len(chunks)} chunks from {root}")
         index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name)
     else:
+        print(f"[{name}] Checking for changes...")
         update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name)
         print(f"[{name}] Incremental update done ({table.count_rows()} chunks)")
     return table

@@ -1,10 +1,10 @@
 import os
 import re
-import multiprocessing
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import signal
 
-from code_index.parsers import TreeSitterParser
+warnings.filterwarnings("ignore", message=".*lancedb fork support is experimental.*")from code_index.parsers import TreeSitterParser
 from code_index.parsers.base import ASTNode
 from code_index.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS, CHARS_PER_TOKEN
 
@@ -251,10 +251,6 @@ def get_file_paths(root_dir, max_workers=None):
         return all_chunks
 
     all_chunks = []
-    try:
-        multiprocessing.set_start_method("spawn", force=True)
-    except RuntimeError:
-        pass
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(_chunk_file, fp): fp for fp in file_paths}
         for future in as_completed(futures):
