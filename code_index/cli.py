@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+from datetime import datetime
 
 import click
 from mcp.server.fastmcp import FastMCP
@@ -23,7 +25,8 @@ _tables = {}
 
 
 def _startup():
-    print("  code-index ready", file=sys.stderr)
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] code-index ready", file=sys.stderr)
 
 
 def _get_db():
@@ -74,16 +77,18 @@ def _index_codebase(name, root, quick=False):
             return table
         print(f"[{name}] Chunking files...")
         chunks = get_file_paths(root)
-        print(f"[{name}] Full index: {len(chunks)} chunks from {root}")
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] [{name}] Full index: {len(chunks)} chunks from {root}")
         from code_index.database import MerkleTree
         merkle_tree = MerkleTree(root)
         index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name, merkle_tree=merkle_tree)
     else:
-        print(f"[{name}] Checking for changes...")
-        import time
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] [{name}] Checking for changes...")
         t0 = time.time()
         update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name)
-        print(f"[{name}] Incremental update done ({table.count_rows()} chunks, {time.time() - t0:.1f}s)")
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] [{name}] Incremental update done ({table.count_rows()} chunks, {time.time() - t0:.1f}s)")
     return table
 
 
@@ -165,7 +170,8 @@ def serve(transport, host, port, quick):
     effective_host = host or "127.0.0.1"
     effective_port = port or 8000
     print(file=sys.stderr)
-    print("  MCP server ready", file=sys.stderr)
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] MCP server ready", file=sys.stderr)
     if transport == "stdio":
         print("  Transport: stdio", file=sys.stderr)
         print(file=sys.stderr)

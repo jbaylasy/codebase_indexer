@@ -2,6 +2,7 @@ import os
 import time
 import hashlib
 import threading
+from datetime import datetime
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -15,6 +16,11 @@ from code_index.config import PERIODIC_REINDEX_SECONDS
 
 ALLOWED_EXTENSIONS = _CODE_EXTENSIONS
 DEBOUNCE_SECONDS = 2
+
+
+def _log(msg):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
 
 
 def _chunk_file(file_path):
@@ -108,7 +114,7 @@ class _DebouncingHandler(FileSystemEventHandler):
         if event_type == "deleted":
             removed = _delete_chunks_for_file(table, file_path)
             if removed:
-                print(f"[watcher] [{cb['name']}] Deleted {removed} chunks: {file_path}")
+                _log(f"[watcher] [{cb['name']}] Deleted {removed} chunks: {file_path}")
                 self._processed += removed
             return
 
@@ -148,10 +154,10 @@ class _DebouncingHandler(FileSystemEventHandler):
                 })
             table.add(records)
             action = "Updated" if removed else "Indexed"
-            print(f"[watcher] [{cb['name']}] {action} {len(chunks)} chunks: {file_path}")
+            _log(f"[watcher] [{cb['name']}] {action} {len(chunks)} chunks: {file_path}")
             self._processed += len(chunks)
         except Exception as e:
-            print(f"[watcher] [{cb['name']}] Error: {file_path}: {e}")
+            _log(f"[watcher] [{cb['name']}] Error: {file_path}: {e}")
 
 
 def start_watcher(codebases):
@@ -164,7 +170,7 @@ def start_watcher(codebases):
         if real_root not in seen_roots:
             observer.schedule(handler, cb["root"], recursive=True)
             seen_roots.add(real_root)
-            print(f"[watcher] Watching: {cb['root']} (as '{cb['name']}')")
+            _log(f"[watcher] Watching: {cb['root']} (as '{cb['name']}')")
 
     observer.daemon = True
     observer.start()
@@ -186,9 +192,9 @@ def start_periodic_reindex(codebases, db_path, interval_seconds=None):
                     name = cb["name"]
                     update_codebase(root, table, split_with_treesitter, db_path=db_path, codebase_name=name)
                 except Exception as e:
-                    print(f"[reindex] [{name}] Error: {e}")
+                    _log(f"[reindex] [{name}] Error: {e}")
 
     thread = threading.Thread(target=_reindex_loop, daemon=True, name="periodic-reindex")
     thread.start()
-    print(f"[reindex] Periodic re-index every {interval}s")
+    _log(f"[reindex] Periodic re-index every {interval}s")
     return thread

@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+from datetime import datetime
 import lancedb
 import pyarrow as pa
 from code_index.embedder import embed_documents
@@ -115,7 +116,8 @@ def index_codebase(chunks, table, db_path=None, codebase_name=None, merkle_tree=
 
     batch_size = 2000
     total = len(chunks)
-    print(f"  Embedding {total} chunks in batches of {batch_size}...")
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] Embedding {total} chunks in batches of {batch_size}...")
     for start in range(0, total, batch_size):
         batch = chunks[start:start + batch_size]
         texts = [c["text"] for c in batch]
@@ -185,7 +187,8 @@ def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=Non
         new_chunks.extend(chunks)
 
     if new_chunks:
-        print(f"  Embedding {len(new_chunks)} chunks...")
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] Embedding {len(new_chunks)} chunks...")
         texts = [c["text"] for c in new_chunks]
         vectors = embed_documents(texts).tolist()
         records = []
