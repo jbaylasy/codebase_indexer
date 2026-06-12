@@ -238,7 +238,8 @@ def run_benchmark(db_path="./code_index_db"):
 
         if table.count_rows() == 0:
             print(f"  Indexing {cb_name}...")
-            chunks = get_file_paths(cb_dir)
+            from code_index.config_loader import get_exclude_from_config
+            chunks = get_file_paths(cb_dir, exclude_dirs=get_exclude_from_config())
             if chunks:
                 index_codebase(chunks, table, db_path=db_path, codebase_name=cb_name)
 

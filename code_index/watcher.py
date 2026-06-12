@@ -15,6 +15,11 @@ from code_index.path_security import is_safe_path
 from code_index.config import PERIODIC_REINDEX_SECONDS
 
 ALLOWED_EXTENSIONS = _CODE_EXTENSIONS
+EXCLUDED_DIRS = frozenset({
+    "node_modules", ".git", ".venv", "__pycache__",
+    ".hg", ".svn", ".bzr", ".tox", ".eggs",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+})
 DEBOUNCE_SECONDS = 2
 
 
@@ -63,7 +68,10 @@ class _DebouncingHandler(FileSystemEventHandler):
         self._processed = 0
 
     def _is_allowed(self, path):
-        if any(part.startswith(".") for part in path.split(os.sep)):
+        parts = path.split(os.sep)
+        if any(part.startswith(".") for part in parts):
+            return False
+        if any(part in EXCLUDED_DIRS for part in parts):
             return False
         return any(path.endswith(ext) for ext in ALLOWED_EXTENSIONS)
 
@@ -177,7 +185,7 @@ def start_watcher(codebases):
     return observer
 
 
-def start_periodic_reindex(codebases, db_path, interval_seconds=None):
+def start_periodic_reindex(codebases, db_path, interval_seconds=None, exclude_dirs=None):
     interval = interval_seconds if interval_seconds is not None else PERIODIC_REINDEX_SECONDS
     if interval <= 0:
         return None
@@ -190,7 +198,7 @@ def start_periodic_reindex(codebases, db_path, interval_seconds=None):
                     table = cb["table"]
                     root = cb["root"]
                     name = cb["name"]
-                    update_codebase(root, table, split_with_treesitter, db_path=db_path, codebase_name=name)
+                    update_codebase(root, table, split_with_treesitter, db_path=db_path, codebase_name=name, exclude_dirs=exclude_dirs)
                 except Exception as e:
                     _log(f"[reindex] [{name}] Error: {e}")
 

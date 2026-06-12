@@ -42,18 +42,26 @@ def _hash_file(file_path):
         return hashlib.md5(f.read()).hexdigest()
 
 
+_EXCLUDED_DIRS = frozenset({
+    "node_modules", ".git", ".venv", "__pycache__",
+    ".hg", ".svn", ".bzr", ".tox", ".eggs",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+})
+
+
 class MerkleTree:
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, exclude_dirs=None):
         self.root_dir = root_dir
         self.file_hashes = {}
         self.dir_hashes = {}
+        self.exclude_dirs = _EXCLUDED_DIRS | frozenset(exclude_dirs or [])
         self._build(root_dir)
 
     def _build(self, directory):
         entries = []
         for entry in sorted(os.listdir(directory)):
             full = os.path.join(directory, entry)
-            if entry.startswith("."):
+            if entry.startswith(".") or entry in self.exclude_dirs:
                 continue
             try:
                 st = os.stat(full)
@@ -154,10 +162,10 @@ def _rebuild_fts_index(table):
         pass
 
 
-def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=None):
+def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=None, exclude_dirs=None):
     from code_index.embedder import embed_documents
 
-    current_tree = MerkleTree(root_dir)
+    current_tree = MerkleTree(root_dir, exclude_dirs=exclude_dirs)
     old_state = _load_merkle_state(db_path or "./code_index_db", codebase_name or "unknown")
     changed_files, new_files = current_tree.get_changed_files(old_state)
     unchanged_skipped = len(current_tree.file_hashes) - len(changed_files) - len(new_files)

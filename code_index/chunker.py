@@ -226,12 +226,18 @@ def _chunk_file(file_path):
     return result
 
 
-def _collect_file_paths(root_dir):
+_EXCLUDED_DIRS = frozenset({
+    "node_modules", ".git", ".venv", "__pycache__",
+    ".hg", ".svn", ".bzr", ".tox", ".eggs",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+})
+
+
+def _collect_file_paths(root_dir, exclude_dirs=None):
+    skip = _EXCLUDED_DIRS | frozenset(exclude_dirs or [])
     file_paths = []
     for root, dirs, files in os.walk(root_dir):
-        for d in dirs[:]:
-            if d.startswith("."):
-                dirs.remove(d)
+        dirs[:] = [d for d in dirs if d not in skip]
         for file in files:
             ext = os.path.splitext(file)[1].lower()
             if ext in _CODE_EXTENSIONS:
@@ -239,10 +245,10 @@ def _collect_file_paths(root_dir):
     return file_paths
 
 
-def get_file_paths(root_dir, max_workers=None):
+def get_file_paths(root_dir, max_workers=None, exclude_dirs=None):
     from code_index.secret_scanner import redact_chunk
 
-    file_paths = _collect_file_paths(root_dir)
+    file_paths = _collect_file_paths(root_dir, exclude_dirs)
 
     if not file_paths:
         return []

@@ -15,7 +15,7 @@ from code_index.database import init_client, get_collection, index_codebase, upd
 from code_index.search import search_code
 from code_index.embedder import init_embedder, warm_up
 from code_index.path_security import validate_root_dir
-from code_index.config_loader import get_codebases_from_config
+from code_index.config_loader import get_codebases_from_config, get_exclude_from_config
 from code_index.config_setup import run_setup, quick_setup
 from code_index import watcher
 from code_index.query_sanitizer import sanitize_query, validate_codebase_name, validate_n_results
@@ -64,7 +64,7 @@ def _init_embedder():
     warm_up()
 
 
-def _index_codebase(name, root, quick=False):
+def _index_codebase(name, root, quick=False, exclude_dirs=None):
     root = validate_root_dir(root)
     tbl_name = _table_name(root)
     table = _get_table(tbl_name)
@@ -73,21 +73,21 @@ def _index_codebase(name, root, quick=False):
         if quick:
             print(f"[{name}] Quick mode — skipping initial index, building in background")
             from code_index.database import MerkleTree, _save_merkle_state
-            merkle_tree = MerkleTree(root)
+            merkle_tree = MerkleTree(root, exclude_dirs=exclude_dirs)
             _save_merkle_state(DB_PATH, name, merkle_tree)
             return table
         print(f"[{name}] Chunking files...")
-        chunks = get_file_paths(root)
+        chunks = get_file_paths(root, exclude_dirs=exclude_dirs)
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] [{name}] Full index: {len(chunks)} chunks from {root}")
         from code_index.database import MerkleTree
-        merkle_tree = MerkleTree(root)
+        merkle_tree = MerkleTree(root, exclude_dirs=exclude_dirs)
         index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name, merkle_tree=merkle_tree)
     else:
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] [{name}] Checking for changes...")
         t0 = time.time()
-        update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name)
+        update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name, exclude_dirs=exclude_dirs)
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] [{name}] Incremental update done ({table.count_rows()} chunks, {time.time() - t0:.1f}s)")
     return table
@@ -143,10 +143,11 @@ def serve(transport, host, port, quick):
     _startup()
     _init_embedder()
     codebases = _resolve_codebases()
+    exclude_dirs = get_exclude_from_config()
     watcher_codebases = []
 
     for cb in codebases:
-        table = _index_codebase(cb["name"], cb["root"], quick=quick)
+        table = _index_codebase(cb["name"], cb["root"], quick=quick, exclude_dirs=exclude_dirs)
         watcher_codebases.append({
             "name": cb["name"],
             "root": cb["root"],
@@ -155,7 +156,7 @@ def serve(transport, host, port, quick):
 
     if watcher_codebases:
         watcher.start_watcher(watcher_codebases)
-        watcher.start_periodic_reindex(watcher_codebases, DB_PATH)
+        watcher.start_periodic_reindex(watcher_codebases, DB_PATH, exclude_dirs=exclude_dirs)
 
     mcp_kwargs = {"name": "code_index"}
     if host:
@@ -224,7 +225,12 @@ def serve(transport, host, port, quick):
     def list_codebases() -> str:
         try:
             db = _get_db()
-            table_names = [t for t in db.list_tables() if t.endswith("_index")]
+            raw_tables = db.list_tables()
+            table_names = []
+            for t in raw_tables:
+                name = t[0] if isinstance(t, tuple) else str(t)
+                if name.endswith("_index"):
+                    table_names.append(name)
             log_list_codebases(len(table_names))
             results = []
             for tbl_name in table_names:
@@ -277,7 +283,8 @@ def index_cmd():
     for cb in codebases:
         root = validate_root_dir(cb["root"])
         table = get_collection(_get_db(), f"{cb['name']}_index")
-        chunks = get_file_paths(root)
+        exclude_dirs = get_exclude_from_config()
+        chunks = get_file_paths(root, exclude_dirs=exclude_dirs)
         print(f"[{cb['name']}] Indexing {len(chunks)} chunks from {root}")
         index_codebase(chunks, table, db_path=DB_PATH, codebase_name=cb["name"])
 
