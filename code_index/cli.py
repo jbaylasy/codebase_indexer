@@ -11,6 +11,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from code_index.config import DB_PATH, EMBEDDING_CACHE_SIZE, PERIODIC_REINDEX_SECONDS, CODE_INDEX_API_KEY
+from code_index.auth import add_user, verify, list_users, revoke_user
 from code_index.chunker import get_file_paths, split_with_treesitter
 from code_index.database import init_client, get_collection, index_codebase, update_codebase
 from code_index.search import search_code, search_code_reranked
@@ -139,9 +140,6 @@ class _AuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if not CODE_INDEX_API_KEY:
-            await self.app(scope, receive, send)
-            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -152,10 +150,14 @@ class _AuthMiddleware:
         headers = dict(scope.get("headers", []))
         auth = headers.get(b"authorization", b"").decode()
         token = auth.removeprefix("Bearer ")
-        if token != CODE_INDEX_API_KEY:
-            await self._unauthorized(send)
+        if CODE_INDEX_API_KEY:
+            if token == CODE_INDEX_API_KEY:
+                await self.app(scope, receive, send)
+                return
+        elif verify(token):
+            await self.app(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        await self._unauthorized(send)
 
     async def _unauthorized(self, send):
         body = b'{"error":"unauthorized"}'
@@ -243,19 +245,22 @@ def serve(transport, host, port, quick):
         print(f"  Loopback:  {loopback_url}", file=sys.stderr)
         if lan_ip != "127.0.0.1":
             print(f"  LAN:       {lan_url}", file=sys.stderr)
-        print(file=sys.stderr)
+        users = list_users()
         if CODE_INDEX_API_KEY:
-            print(f"  API Key:   {CODE_INDEX_API_KEY}", file=sys.stderr)
+            print(f"  Auth:      legacy CODE_INDEX_API_KEY set", file=sys.stderr)
+        elif users:
+            print(f"  Auth:      {len(users)} user(s) configured", file=sys.stderr)
         else:
-            print(f"  API Key:   (none — set CODE_INDEX_API_KEY env var for remote access)", file=sys.stderr)
+            print(f"  Auth:      none (run `code-index auth add --user <name>` to add keys)", file=sys.stderr)
         print(file=sys.stderr)
         print("  Connect your AI agent:", file=sys.stderr)
         if CODE_INDEX_API_KEY:
             print(f"    claude mcp add code-index sse --url {loopback_url} --headers '{{\"Authorization\": \"Bearer {CODE_INDEX_API_KEY}\"}}'", file=sys.stderr)
             print(f"    opencode mcp add code-index   # interactive, select remote, URL {loopback_url}", file=sys.stderr)
             print(f"    Then add Authorization header: Bearer {CODE_INDEX_API_KEY}", file=sys.stderr)
-        else:
-            print(f"    claude mcp add code-index sse --url {loopback_url}", file=sys.stderr)
+        elif users:
+            print(f"    Use the API key shown by `code-index auth add`", file=sys.stderr)
+            print(f"    URL: {loopback_url}", file=sys.stderr)
     print(file=sys.stderr)
 
     @mcp.tool()
@@ -380,6 +385,48 @@ def index_cmd():
         chunks = get_file_paths(root, exclude_dirs=exclude_dirs)
         print(f"[{cb['name']}] Indexing {len(chunks)} chunks from {root}")
         index_codebase(chunks, table, db_path=_resolve_db_path(), codebase_name=cb["name"])
+
+
+@main.group()
+def auth():
+    """Manage API keys for remote MCP access."""
+
+
+@auth.command("add")
+@click.option("--user", required=True, help="Username for this key")
+def auth_add(user):
+    raw = add_user(user)
+    print(f"  Created key for user: {user}", file=sys.stderr)
+    print(f"  Raw key (shown once): {raw}", file=sys.stderr)
+    print(f"  Key ID:               {raw[:12]}", file=sys.stderr)
+    print(f"  Store it securely — it cannot be retrieved again.", file=sys.stderr)
+
+
+@auth.command("list")
+def auth_list():
+    users = list_users()
+    if not users:
+        print("  No API keys configured.", file=sys.stderr)
+        return
+    print(f"  {'User':<20} {'Key ID':<16} {'Created':<20}", file=sys.stderr)
+    print(f"  {'-'*20} {'-'*16} {'-'*20}", file=sys.stderr)
+    for u in sorted(users, key=lambda x: x["created_at"]):
+        created = time.strftime("%Y-%m-%d %H:%M", time.localtime(u["created_at"]))
+        print(f"  {u['name']:<20} {u['key_id']:<16} {created:<20}", file=sys.stderr)
+
+
+@auth.command("revoke")
+@click.option("--user", default=None, help="Revoke by username")
+@click.option("--key-id", default=None, help="Revoke by key ID prefix")
+def auth_revoke(user, key_id):
+    if not user and not key_id:
+        print("  Specify --user or --key-id to revoke.", file=sys.stderr)
+        return
+    ok = revoke_user(name=user, key_id=key_id)
+    if ok:
+        print(f"  Key revoked.", file=sys.stderr)
+    else:
+        print(f"  No matching key found.", file=sys.stderr)
 
 
 @main.command(help="""
