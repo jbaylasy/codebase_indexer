@@ -224,19 +224,20 @@ def serve(transport, host, port, quick):
     def list_codebases() -> str:
         try:
             db = _get_db()
-            table_names = db.list_tables()
+            table_names = [t for t in db.list_tables() if t.endswith("_index")]
             log_list_codebases(len(table_names))
             results = []
             for tbl_name in table_names:
                 t = db.open_table(tbl_name)
                 count = t.count_rows()
-                results.append(f"{tbl_name}: {count} chunks")
+                display_name = tbl_name.replace("_index", "")
+                results.append(f"  {display_name}: {count} chunks")
             if not results:
                 return "No indexed codebases found."
-            return "\n".join(results)
+            return "Indexed codebases:\n" + "\n".join(results)
         except Exception as e:
-            log_error("list_codebases", type(e).__name__)
-            return "Error: could not list codebases"
+            log_error("list_codebases", f"{type(e).__name__}: {e}")
+            return f"Error listing codebases: {e}"
 
     @mcp.tool()
     def remove_codebase(codebase_name: str) -> str:
