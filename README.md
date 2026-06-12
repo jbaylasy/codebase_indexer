@@ -261,9 +261,35 @@ The MCP server exposes three tools for MCP-compatible agents.
 
 There are two ways to connect:
 
-**stdio** (default, for local agents) — the MCP server communicates over stdin/stdout. The agent launches the server as a subprocess.
+**stdio** (for spawned local processes) — the AI agent launches the server as a subprocess. No auth needed.
 
-**SSE / streamable-http** (for remote agents) — the MCP server listens on an HTTP endpoint. Start with `--transport sse --port 8080`.
+**SSE / streamable-http** (for persistent servers) — the MCP server listens on an HTTP endpoint. Start with `--transport sse --port 1337`. This is the default.
+
+### Authentication
+
+When running the server on a network-accessible machine, you must secure it with an API key.
+
+**Create a key:**
+
+```bash
+code-index auth add --user alice
+# → Raw key (shown once): cik_a1b2c3d4...
+# → Key ID:               cik_a1b2c3d4
+```
+
+Keys are hashed with PBKDF2 and stored in `~/.config/code_index/auth.json`. The raw key is printed once — save it securely.
+
+**List / revoke keys:**
+
+```bash
+code-index auth list
+code-index auth revoke --user alice
+code-index auth revoke --key-id cik_a1b2c3d4
+```
+
+**Legacy mode:** Set `CODE_INDEX_API_KEY=your-key` as an environment variable (takes priority over hashed keys).
+
+If no keys are configured, the server accepts all connections (appropriate for local-only use).
 
 ### Connecting from AI Tools
 
@@ -273,15 +299,17 @@ The server runs as an SSE HTTP server. **Leave it running in a terminal** — it
 
 ```bash
 cd /path/to/codebase_indexer
-uv run python -m code_index
+uv run python -m code-index
 ```
 
-#### Connect your agent
+If you configured auth keys, the server prints the connection details. Pass the `Bearer` token in the `Authorization` header of each MCP config:
 
 **Claude Code:**
 
 ```bash
-claude mcp add code-index sse --url http://127.0.0.1:1337/sse
+claude mcp add code-index sse \
+  --url http://127.0.0.1:1337/sse \
+  --headers '{"Authorization": "Bearer cik_a1b2c3d4..."}'
 ```
 
 **opencode:**
@@ -293,7 +321,10 @@ Add to `~/.config/opencode/config.json`:
   "mcpServers": {
     "code-index": {
       "transport": "sse",
-      "url": "http://127.0.0.1:1337/sse"
+      "url": "http://127.0.0.1:1337/sse",
+      "headers": {
+        "Authorization": "Bearer cik_a1b2c3d4..."
+      }
     }
   }
 }
@@ -301,10 +332,11 @@ Add to `~/.config/opencode/config.json`:
 
 **Cursor:**
 
-1. Settings → Features → MCP Servers → Add new MCP Server
-2. Name: `code-index`
-3. Type: `sse`
-4. URL: `http://127.0.0.1:1337/sse`
+Settings → Features → MCP Servers → Add new MCP Server:
+- Name: `code-index`
+- Type: `sse`
+- URL: `http://127.0.0.1:1337/sse`
+- Headers: `{"Authorization": "Bearer cik_a1b2c3d4..."}`
 
 **Windsurf / Codeium:**
 
@@ -315,7 +347,10 @@ Add to `.codeium/windsurf.mcp.json`:
   "mcpServers": {
     "code-index": {
       "type": "sse",
-      "url": "http://127.0.0.1:1337/sse"
+      "url": "http://127.0.0.1:1337/sse",
+      "headers": {
+        "Authorization": "Bearer cik_a1b2c3d4..."
+      }
     }
   }
 }
@@ -331,7 +366,10 @@ Add to `~/.continue/config.json`:
     "mcpServers": {
       "code-index": {
         "transport": "sse",
-        "url": "http://127.0.0.1:1337/sse"
+        "url": "http://127.0.0.1:1337/sse",
+        "headers": {
+          "Authorization": "Bearer cik_a1b2c3d4..."
+        }
       }
     }
   }
@@ -345,7 +383,7 @@ Once connected, your AI agent can search your codebase with natural language que
 
 #### Connecting from another machine
 
-Use the **LAN** address printed at startup (e.g., `http://172.16.1.102:1337/sse`). Replace `127.0.0.1` in the commands above with that address.
+Use the **LAN** address printed at startup (e.g., `http://172.16.1.102:1337/sse`). You **must** have auth keys configured — pass the same `Authorization` header in the agent config.
 
 #### Troubleshooting
 
@@ -394,7 +432,8 @@ exclude:
 | `CODE_INDEX_CHARS_PER_TOKEN` | `4` | Character-to-token ratio for chunk sizing |
 | `CODE_INDEX_PERIODIC_REINDEX_SECONDS` | `300` | Full Merkle re-index interval (0 to disable) |
 | `CODE_INDEX_MAX_FILE_SIZE_MB` | `10` | Skip files larger than this |
-| `CODE_INDEX_DB_ENCRYPTION_KEY` | (auto-generated) | Fernet key for encryption at rest |
+| `CODE_INDEX_DB_ENCRYPTION_KEY` | (none) | Fernet key for encryption at rest |
+| `CODE_INDEX_API_KEY` | (none) | Legacy API key (takes priority over hashed keys from `auth add`) |
 | `CODE_INDEX_ALLOWED_DIRS` | (empty) | Restrict indexed paths (comma-separated). Empty = allow any non-sensitive path. |
 | `CODE_INDEX_AUDIT_DIR` | (disabled) | Directory for JSONL audit logs |
 | `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for the embedder |
