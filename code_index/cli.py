@@ -187,7 +187,7 @@ def serve(transport, host, port, quick):
         print(file=sys.stderr)
         print("  Connect your AI agent:", file=sys.stderr)
         print(f"    claude mcp add code-index sse --url {loopback_url}", file=sys.stderr)
-        print(f"    opencode mcp add code-index sse --url {loopback_url}", file=sys.stderr)
+        print(f"    opencode mcp add code-index   # interactive, select remote, enter URL: {loopback_url}", file=sys.stderr)
     print(file=sys.stderr)
 
     @mcp.tool()
