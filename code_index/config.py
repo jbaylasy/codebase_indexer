@@ -1,4 +1,5 @@
 import os
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,3 +22,4 @@ CHUNK_MAX_TOKENS = int(os.getenv("CODE_INDEX_CHUNK_MAX_TOKENS", "220"))
 CHUNK_MIN_TOKENS = int(os.getenv("CODE_INDEX_CHUNK_MIN_TOKENS", "10"))
 CHARS_PER_TOKEN = int(os.getenv("CODE_INDEX_CHARS_PER_TOKEN", "4"))
 PERIODIC_REINDEX_SECONDS = int(os.getenv("CODE_INDEX_PERIODIC_REINDEX_SECONDS", "300"))
+CODE_INDEX_API_KEY = os.getenv("CODE_INDEX_API_KEY", "") or secrets.token_urlsafe(32)

@@ -7,9 +7,10 @@ import time
 from datetime import datetime
 
 import click
+import uvicorn
 from mcp.server.fastmcp import FastMCP
 
-from code_index.config import DB_PATH, EMBEDDING_CACHE_SIZE, PERIODIC_REINDEX_SECONDS
+from code_index.config import DB_PATH, EMBEDDING_CACHE_SIZE, PERIODIC_REINDEX_SECONDS, CODE_INDEX_API_KEY
 from code_index.chunker import get_file_paths, split_with_treesitter
 from code_index.database import init_client, get_collection, index_codebase, update_codebase
 from code_index.search import search_code, search_code_reranked
@@ -133,6 +134,39 @@ def _get_lan_ip() -> str:
         s.close()
 
 
+class _AuthMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path in ("/health", "/favicon.ico"):
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers", []))
+        auth = headers.get(b"authorization", b"").decode()
+        token = auth.removeprefix("Bearer ")
+        if token != CODE_INDEX_API_KEY:
+            await self._unauthorized(send)
+            return
+        await self.app(scope, receive, send)
+
+    async def _unauthorized(self, send):
+        body = b'{"error":"unauthorized"}'
+        await send({
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+
 @main.command(help="""
 Start the MCP server — index configured codebases, watch files, and serve
 search queries over SSE.
@@ -207,9 +241,14 @@ def serve(transport, host, port, quick):
         if lan_ip != "127.0.0.1":
             print(f"  LAN:       {lan_url}", file=sys.stderr)
         print(file=sys.stderr)
+        if not os.getenv("CODE_INDEX_API_KEY"):
+            print(f"  API Key:   {CODE_INDEX_API_KEY}", file=sys.stderr)
+            print(f"             (set CODE_INDEX_API_KEY in .env to pin it)", file=sys.stderr)
+        print(file=sys.stderr)
         print("  Connect your AI agent:", file=sys.stderr)
-        print(f"    claude mcp add code-index sse --url {loopback_url}", file=sys.stderr)
-        print(f"    opencode mcp add code-index   # interactive, select remote, enter URL: {loopback_url}", file=sys.stderr)
+        print(f"    claude mcp add code-index sse --url {loopback_url} --headers '{{\"Authorization\": \"Bearer {CODE_INDEX_API_KEY}\"}}'", file=sys.stderr)
+        print(f"    opencode mcp add code-index   # interactive, select remote, URL {loopback_url}", file=sys.stderr)
+        print(f"    Then add Authorization header: Bearer {CODE_INDEX_API_KEY}", file=sys.stderr)
     print(file=sys.stderr)
 
     @mcp.tool()
@@ -302,7 +341,11 @@ def serve(transport, host, port, quick):
             log_error("remove_codebase", type(e).__name__)
             return "Error: could not remove codebase"
 
-    mcp.run(transport=transport)
+    if transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        app = _AuthMiddleware(mcp.sse_app())
+        uvicorn.run(app, host=effective_host, port=effective_port, log_level="info")
 
 
 @main.command(name="index", help="""
