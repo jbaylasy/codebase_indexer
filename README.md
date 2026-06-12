@@ -281,7 +281,7 @@ uv run python -m code_index
 **Claude Code:**
 
 ```bash
-claude mcp add code-index sse --url http://127.0.0.1:8000/sse
+claude mcp add code-index sse --url http://127.0.0.1:1337/sse
 ```
 
 **opencode:**
@@ -293,7 +293,7 @@ Add to `~/.config/opencode/config.json`:
   "mcpServers": {
     "code-index": {
       "transport": "sse",
-      "url": "http://127.0.0.1:8000/sse"
+      "url": "http://127.0.0.1:1337/sse"
     }
   }
 }
@@ -304,7 +304,7 @@ Add to `~/.config/opencode/config.json`:
 1. Settings → Features → MCP Servers → Add new MCP Server
 2. Name: `code-index`
 3. Type: `sse`
-4. URL: `http://127.0.0.1:8000/sse`
+4. URL: `http://127.0.0.1:1337/sse`
 
 **Windsurf / Codeium:**
 
@@ -315,7 +315,7 @@ Add to `.codeium/windsurf.mcp.json`:
   "mcpServers": {
     "code-index": {
       "type": "sse",
-      "url": "http://127.0.0.1:8000/sse"
+      "url": "http://127.0.0.1:1337/sse"
     }
   }
 }
@@ -331,7 +331,7 @@ Add to `~/.continue/config.json`:
     "mcpServers": {
       "code-index": {
         "transport": "sse",
-        "url": "http://127.0.0.1:8000/sse"
+        "url": "http://127.0.0.1:1337/sse"
       }
     }
   }
@@ -345,7 +345,7 @@ Once connected, your AI agent can search your codebase with natural language que
 
 #### Connecting from another machine
 
-Use the **LAN** address printed at startup (e.g., `http://172.16.1.102:8000/sse`). Replace `127.0.0.1` in the commands above with that address.
+Use the **LAN** address printed at startup (e.g., `http://172.16.1.102:1337/sse`). Replace `127.0.0.1` in the commands above with that address.
 
 #### Troubleshooting
 

@@ -124,7 +124,7 @@ If no config is found, launches the interactive setup wizard automatically.
 
 Examples:
 
-  code-index serve                         # start SSE server on :8000
+  code-index serve                         # start SSE server on :1337
   code-index serve --port 8080             # custom port
   code-index serve --quick                 # skip initial index, build in background
 
@@ -137,7 +137,7 @@ Examples:
 @click.option("--transport", default="sse", show_default=True,
               type=click.Choice(["sse", "stdio", "streamable-http"]))
 @click.option("--host", default=None, help="Bind address for SSE/HTTP transports (default: 127.0.0.1)")
-@click.option("--port", default=None, type=int, help="Port for SSE/HTTP transports (default: 8000)")
+@click.option("--port", default=1337, type=int, help="Port for SSE/HTTP transports (default: 1337)")
 @click.option("--quick", is_flag=True, help="Skip initial index, build in background")
 def serve(transport, host, port, quick):
     _startup()
@@ -166,7 +166,7 @@ def serve(transport, host, port, quick):
     init_audit_log()
 
     effective_host = host or "127.0.0.1"
-    effective_port = port or 8000
+    effective_port = port
     print(file=sys.stderr)
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] MCP server ready", file=sys.stderr)
