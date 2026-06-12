@@ -161,7 +161,6 @@ def update_codebase(root_dir, table, chunker_fn, db_path=None, codebase_name=Non
     unchanged_skipped = len(current_tree.file_hashes) - len(changed_files) - len(new_files)
 
     if not changed_files and not new_files:
-        print(f"  No changes detected ({unchanged_skipped} files unchanged).")
         return
 
     files_to_reindex = changed_files + new_files
