@@ -11,6 +11,7 @@ from code_index.parsers.base import ASTNode
 from code_index.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS, CHARS_PER_TOKEN
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+MAX_CHUNK_CHARS = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN * 2
 CHUNK_TIMEOUT_SECONDS = 30
 _CODE_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java",
@@ -151,16 +152,45 @@ def _ast_nodes_to_chunks(nodes, file_path, source_code):
 
 
 def _fallback_chunk(source_code, file_path):
-    enriched = _enrich_chunk_text(source_code, file_path, "file", os.path.basename(file_path))
-    return [{
-        "text": enriched,
-        "metadata": {
-            "file": file_path,
-            "start_line": 1,
-            "type": "file",
-            "name": os.path.basename(file_path),
-        },
-    }]
+    if len(source_code) <= MAX_CHUNK_CHARS:
+        enriched = _enrich_chunk_text(source_code, file_path, "file", os.path.basename(file_path))
+        return [{
+            "text": enriched,
+            "metadata": {
+                "file": file_path,
+                "start_line": 1,
+                "type": "file",
+                "name": os.path.basename(file_path),
+            },
+        }]
+
+    paragraphs = [p.strip() for p in source_code.split('\n\n') if p.strip()]
+    groups = []
+    group = ""
+    for p in paragraphs:
+        if group and len(group) + len(p) + 2 > MAX_CHUNK_CHARS:
+            groups.append(group)
+            group = p
+        else:
+            group = (group + '\n\n' + p) if group else p
+    if group:
+        groups.append(group)
+
+    chunks = []
+    total = len(groups)
+    for i, part in enumerate(groups):
+        part_info = f"part {i + 1}/{total}"
+        enriched = _enrich_chunk_text(part, file_path, "file", os.path.basename(file_path), part_info=part_info)
+        chunks.append({
+            "text": enriched,
+            "metadata": {
+                "file": file_path,
+                "start_line": 1,
+                "type": "file",
+                "name": os.path.basename(file_path),
+            },
+        })
+    return chunks
 
 
 def split_with_treesitter(source_code, file_path):

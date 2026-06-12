@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import gc
 from datetime import datetime
 import lancedb
 import pyarrow as pa
@@ -149,7 +150,10 @@ def index_codebase(chunks, table, db_path=None, codebase_name=None, merkle_tree=
             })
         table.add(records)
         print(f"  Batch {start // batch_size + 1}/{(total + batch_size - 1) // batch_size}: {len(records)} chunks written")
+    del chunks, texts, vectors, records
+    gc.collect()
     _rebuild_fts_index(table)
+    gc.collect()
     if merkle_tree:
         _save_merkle_state(db_path or "./code_index_db", codebase_name or "unknown", merkle_tree)
     print(f"  Done — {total} chunks indexed.")

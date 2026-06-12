@@ -320,7 +320,12 @@ def index_cmd():
     codebases = _resolve_codebases()
     for cb in codebases:
         root = validate_root_dir(cb["root"])
-        table = get_collection(_get_db(), f"{cb['name']}_index")
+        table_name = f"{cb['name']}_index"
+        try:
+            _get_db().drop_table(table_name)
+        except Exception:
+            pass
+        table = get_collection(_get_db(), table_name)
         exclude_dirs = get_exclude_from_config()
         chunks = get_file_paths(root, exclude_dirs=exclude_dirs)
         print(f"[{cb['name']}] Indexing {len(chunks)} chunks from {root}")
