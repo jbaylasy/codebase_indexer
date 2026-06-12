@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import time
 from datetime import datetime
@@ -96,48 +97,45 @@ def _index_codebase(name, root, quick=False):
 @click.pass_context
 def main(ctx):
     if ctx.invoked_subcommand is None:
-        print(ctx.get_help())
-        print()
-        print("  Examples:")
-        print("    code-index setup ~/my-project       Configure a project")
-        print("    code-index serve                     Start server (run after setup)")
-        print("    code-index index                     One-shot index")
-        print("    code-index search --query <q> --codebase <name>")
-        print()
+        ctx.invoke(serve)
+
+
+def _get_lan_ip() -> str:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0.1)
+    try:
+        s.connect(("10.254.254.254", 1))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 @main.command(help="""
 Start the MCP server — index configured codebases, watch files, and serve
-search queries.
+search queries over SSE.
+
+Run this in a terminal and leave it running to keep the model warm.
+Connect your AI agent (Claude Code, Cursor, opencode, etc.) to the SSE URL.
 
 Reads .codeindex.yml from the current directory (walks up to git root).
 If no config is found, launches the interactive setup wizard automatically.
 
-The server continuously watches files for changes and reindexes automatically.
-A periodic full reindex also runs every 300s (configurable).
-
-Transport modes:
-  stdio (default)     MCP over stdio. Connect via claude mcp add or
-                      your MCP client's command config.
-
-  sse                 SSE transport at http://HOST:PORT/sse.
-
-  streamable-http     HTTP streaming at http://HOST:PORT/mcp.
-
 Examples:
 
-  code-index serve
-    Start with stdio transport (default).
+  code-index serve                         # start SSE server on :8000
+  code-index serve --port 8080             # custom port
+  code-index serve --quick                 # skip initial index, build in background
 
-  code-index serve --transport sse --port 8080
-    Start SSE server on port 8080.
+  --transport: sse (default), stdio, or streamable-http
+               sse connects via HTTP (recommended for persistent servers)
+               stdio connects via stdin/stdout (for spawned processes)
 
-  code-index serve --quick
-    Skip initial index, build in background via periodic re-index.
-    Useful on slow machines or large codebases.
+  See README.md for MCP connection instructions for your AI tool.
 """)
-@click.option("--transport", default="stdio", show_default=True,
-              type=click.Choice(["stdio", "sse", "streamable-http"]))
+@click.option("--transport", default="sse", show_default=True,
+              type=click.Choice(["sse", "stdio", "streamable-http"]))
 @click.option("--host", default=None, help="Bind address for SSE/HTTP transports (default: 127.0.0.1)")
 @click.option("--port", default=None, type=int, help="Port for SSE/HTTP transports (default: 8000)")
 @click.option("--quick", is_flag=True, help="Skip initial index, build in background")
@@ -175,17 +173,21 @@ def serve(transport, host, port, quick):
     if transport == "stdio":
         print("  Transport: stdio", file=sys.stderr)
         print(file=sys.stderr)
-        print("  Connect from another process:", file=sys.stderr)
+        print("  Connect your AI agent:", file=sys.stderr)
         print(f"    claude mcp add code-index -- uv run --directory {os.getcwd()} python -m code_index", file=sys.stderr)
-        print(file=sys.stderr)
-        print("  Or use the search command directly:", file=sys.stderr)
-        print(f"    cd {os.getcwd()} && uv run code-index search --query <query> --codebase <name>", file=sys.stderr)
     else:
         suffix = "/sse" if transport == "sse" else "/mcp"
+        lan_ip = _get_lan_ip()
+        loopback_url = f"http://127.0.0.1:{effective_port}{suffix}"
+        lan_url = f"http://{lan_ip}:{effective_port}{suffix}"
         print(f"  Transport: {transport}", file=sys.stderr)
-        print(f"  URL:       http://{effective_host}:{effective_port}{suffix}", file=sys.stderr)
+        print(f"  Loopback:  {loopback_url}", file=sys.stderr)
+        if lan_ip != "127.0.0.1":
+            print(f"  LAN:       {lan_url}", file=sys.stderr)
         print(file=sys.stderr)
-        print("  Connect your MCP client to this URL.", file=sys.stderr)
+        print("  Connect your AI agent:", file=sys.stderr)
+        print(f"    claude mcp add code-index sse --url {loopback_url}", file=sys.stderr)
+        print(f"    opencode mcp add code-index sse --url {loopback_url}", file=sys.stderr)
     print(file=sys.stderr)
 
     @mcp.tool()

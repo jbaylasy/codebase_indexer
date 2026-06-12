@@ -1,5 +1,7 @@
 from __future__ import annotations
 
-from code_index.cli import main
+import sys
+from code_index.cli import serve
 
-main()
+if __name__ == "__main__":
+    serve(args=sys.argv[1:])

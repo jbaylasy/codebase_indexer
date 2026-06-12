@@ -17,7 +17,8 @@ cd codebase_indexer
 uv sync
 
 # Start the server — if no config, launches setup wizard automatically
-uv run code-index serve
+uv run python -m code_index
+# or: uv run code-index serve
 
 # Search while the server runs (in another terminal)
 uv run code-index search --query "api rate limiter" --codebase my-project
@@ -38,7 +39,7 @@ uv sync
 ### 2. Start the server
 
 ```bash
-uv run code-index serve
+uv run python -m code_index
 ```
 
 On first run there's no config yet, so the interactive setup wizard starts:
@@ -95,11 +96,15 @@ uv run code-index serve --transport sse --port 8080
 
 ### `code-index` (no subcommand)
 
-Prints usage help with examples.
+Starts the MCP server (same as `code-index serve`). Auto-setup if no config found.
+
+Use `code-index --help` to see all subcommands.
 
 ### `code-index serve`
 
 Start the MCP server — index codebases, watch files, and serve search queries.
+
+This is the default when running `code-index` or `python -m code_index` with no subcommand.
 
 Reads `.codeindex.yml` from the current directory (walks up to git root).
 If no config is found, launches the interactive setup wizard automatically.
@@ -107,6 +112,7 @@ If no config is found, launches the interactive setup wizard automatically.
 ```bash
 code-index serve                         # start server (auto-setup if needed)
 code-index serve --transport sse --port 8080
+code-index serve --quick                 # skip initial index, build in background
 ```
 
 **Options:**
@@ -251,38 +257,99 @@ The MCP server exposes three tools for MCP-compatible agents.
 | `list_codebases` | none | List of indexed codebase tables with chunk counts |
 | `remove_codebase` | `codebase_name` (str) | Confirmation string |
 
-### Integrating with AI Agents
+### Transport Modes
+
+There are two ways to connect:
+
+**stdio** (default, for local agents) — the MCP server communicates over stdin/stdout. The agent launches the server as a subprocess.
+
+**SSE / streamable-http** (for remote agents) — the MCP server listens on an HTTP endpoint. Start with `--transport sse --port 8080`.
+
+### Connecting from AI Tools
+
+The server runs as an SSE HTTP server. **Leave it running in a terminal** — it keeps the model warm so queries are instant.
+
+#### Start the server
+
+```bash
+cd /path/to/codebase_indexer
+uv run python -m code_index
+```
+
+#### Connect your agent
 
 **Claude Code:**
 
-Connect directly while in the repo directory:
-
 ```bash
-claude mcp add code-index -- uv run python -m code_index
-```
-
-If running from outside the repo:
-
-```bash
-claude mcp add code-index -- uv run --directory /path/to/codebase_indexer python -m code_index
+claude mcp add code-index sse --url http://127.0.0.1:8000/sse
 ```
 
 **opencode:**
+
+Add to `~/.config/opencode/config.json`:
 
 ```json
 {
   "mcpServers": {
     "code-index": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/codebase_indexer", "python", "-m", "code_index"]
+      "transport": "sse",
+      "url": "http://127.0.0.1:8000/sse"
     }
   }
 }
 ```
 
-**Cursor:** Add as an MCP server in Cursor settings with the same command.
+**Cursor:**
 
----
+1. Settings → Features → MCP Servers → Add new MCP Server
+2. Name: `code-index`
+3. Type: `sse`
+4. URL: `http://127.0.0.1:8000/sse`
+
+**Windsurf / Codeium:**
+
+Add to `.codeium/windsurf.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "code-index": {
+      "type": "sse",
+      "url": "http://127.0.0.1:8000/sse"
+    }
+  }
+}
+```
+
+**Continue.dev:**
+
+Add to `~/.continue/config.json`:
+
+```json
+{
+  "experimental": {
+    "mcpServers": {
+      "code-index": {
+        "transport": "sse",
+        "url": "http://127.0.0.1:8000/sse"
+      }
+    }
+  }
+}
+```
+
+Once connected, your AI agent can search your codebase with natural language queries:
+- "Find where the database connection pool is configured"
+- "How does the authentication middleware work?"
+- "Show me the API rate limiter implementation"
+
+#### Connecting from another machine
+
+Use the **LAN** address printed at startup (e.g., `http://172.16.1.102:8000/sse`). Replace `127.0.0.1` in the commands above with that address.
+
+#### Troubleshooting
+
+If you restart the server, you may need to restart your AI agent or reconnect (varies by tool). Some tools auto-reconnect to SSE endpoints.
 
 ## Configuration
 
@@ -463,10 +530,3 @@ code_index/
     └── c_parser.py
 ```
 
-### Key Design Decisions
-
-- **Single entry point** — Everything runs through `code-index` CLI (Click). No separate scripts.
-- **Unified chunker** — `split_with_treesitter` is the only chunker. Used by all indexing paths.
-- **Config auto-discovery** — Walks up from cwd to git root, same as `.gitignore`.
-- **Lazy module loading** — Heavy imports (tree-sitter, sentence-transformers, lanceDB) load on demand; `setup` stays fast.
-- **Daemon threads** — File watcher + periodic re-index both run as daemon threads inside the MCP server process.
