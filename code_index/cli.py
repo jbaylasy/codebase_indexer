@@ -138,8 +138,21 @@ def _get_lan_ip() -> str:
 class _AuthMiddleware:
     def __init__(self, app):
         self.app = app
+        self._has_keys = bool(CODE_INDEX_API_KEY)
+        self._has_users = bool(self._load_users())
+
+    @staticmethod
+    def _load_users() -> dict:
+        try:
+            from code_index.auth import list_users
+            return list_users()
+        except Exception:
+            return {}
 
     async def __call__(self, scope, receive, send):
+        if not self._has_keys and not self._has_users:
+            await self.app(scope, receive, send)
+            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -148,15 +161,17 @@ class _AuthMiddleware:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers", []))
-        auth = headers.get(b"authorization", b"").decode()
-        token = auth.removeprefix("Bearer ")
-        if CODE_INDEX_API_KEY:
+        auth_header = headers.get(b"authorization", b"").decode()
+        token = auth_header.removeprefix("Bearer ")
+        if self._has_keys:
             if token == CODE_INDEX_API_KEY:
                 await self.app(scope, receive, send)
                 return
-        elif verify(token):
-            await self.app(scope, receive, send)
-            return
+        else:
+            from code_index.auth import verify
+            if verify(token):
+                await self.app(scope, receive, send)
+                return
         await self._unauthorized(send)
 
     async def _unauthorized(self, send):
