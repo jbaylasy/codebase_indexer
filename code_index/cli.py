@@ -51,6 +51,17 @@ def _get_table(name):
     return _tables[name]
 
 
+def _list_indexed_tables():
+    db = _get_db()
+    pairs = []
+    for t in db.list_tables():
+        name = t[0] if isinstance(t, tuple) else str(t)
+        if name.endswith("_index"):
+            display = name.replace("_index", "")
+            pairs.append((display, _get_table(name)))
+    return pairs
+
+
 def _resolve_codebases():
     config_cbs = get_codebases_from_config()
     if config_cbs:
@@ -192,34 +203,51 @@ def serve(transport, host, port, quick):
     print(file=sys.stderr)
 
     @mcp.tool()
-    def search_code_tool(query: str, codebase_name: str, n_results: int = 3) -> str:
+    def search_code_tool(query: str, codebase_name: str | None = None, n_results: int = 3) -> str:
         try:
             query = sanitize_query(query)
-            codebase_name = validate_codebase_name(codebase_name)
             n_results = validate_n_results(n_results)
         except ValueError as e:
             log_security_event("invalid_search_input", str(e))
             return f"Invalid input: {e}"
         try:
-            table = _get_table(f"{codebase_name}_index")
-            if table.count_rows() == 0:
-                return f"No indexed codebase found for '{codebase_name}'."
-            result = search_code(query, table, n_results)
-            log_search(query, codebase_name, n_results, len(result["results"]))
+            if codebase_name:
+                codebase_name = validate_codebase_name(codebase_name)
+                tables_to_search = [(codebase_name, _get_table(f"{codebase_name}_index"))]
+            else:
+                tables_to_search = _list_indexed_tables()
+
+            all_results = []
+            for name, table in tables_to_search:
+                if table.count_rows() == 0:
+                    continue
+                result = search_code(query, table, n_results)
+                for r in result["results"]:
+                    r["_codebase"] = name
+                all_results.extend(result["results"])
+
+            if not all_results:
+                return "No indexed codebases found."
+
+            all_results.sort(key=lambda r: r["distance"])
+            top = all_results[:n_results]
+
+            log_search(query, codebase_name or "all", n_results, len(all_results))
             lines = [f'Query: "{query}"', "=" * 60]
-            for i, r in enumerate(result["results"]):
+            for i, r in enumerate(top):
                 lines.append(f"--- Result {i + 1} ---")
-                lines.append(f"File:   {r['file']}")
-                lines.append(f"Line:   {r['start_line']}")
-                lines.append(f"Name:   {r['name']}")
-                lines.append(f"Type:   {r['type']}")
-                lines.append(f"Score:  {r['distance']:.4f}")
+                lines.append(f"Codebase: {r['_codebase']}")
+                lines.append(f"File:     {r['file']}")
+                lines.append(f"Line:     {r['start_line']}")
+                lines.append(f"Name:     {r['name']}")
+                lines.append(f"Type:     {r['type']}")
+                lines.append(f"Score:    {r['distance']:.4f}")
                 lines.append(f"Code:\n{r['code']}")
                 lines.append("-" * 60)
             return "\n".join(lines)
         except Exception as e:
             log_error("search_code", type(e).__name__)
-            return "Error: search failed"
+            return f"Error: search failed — {e}"
 
     @mcp.tool()
     def list_codebases() -> str:
