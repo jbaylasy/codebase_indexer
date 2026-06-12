@@ -19,6 +19,7 @@ from sentence_transformers import SentenceTransformer
 from code_index.config import EMBEDDING_MODEL, EMBEDDING_MODEL_SHA256, EMBEDDING_OFFLINE, EMBEDDING_BATCH_SIZE
 
 _model = None
+_reranker = None
 _cache = None
 _cache_size = 512
 
@@ -96,6 +97,20 @@ def embed_documents(texts):
     if _model is None:
         init_embedder()
     return _model.encode(texts, normalize_embeddings=True, show_progress_bar=True, batch_size=EMBEDDING_BATCH_SIZE)
+
+
+def rerank(query, candidates):
+    from sentence_transformers import CrossEncoder
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", cache_folder=_LOCAL_MODEL_DIR)
+    if not candidates:
+        return candidates
+    pairs = [(query, c["code"]) for c in candidates]
+    scores = _reranker.predict(pairs)
+    for i, c in enumerate(candidates):
+        c["relevance_score"] = float(scores[i])
+    return sorted(candidates, key=lambda c: c["relevance_score"], reverse=True)
 
 
 def warm_up():

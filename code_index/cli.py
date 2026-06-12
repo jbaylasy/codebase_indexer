@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from code_index.config import DB_PATH, EMBEDDING_CACHE_SIZE, PERIODIC_REINDEX_SECONDS
 from code_index.chunker import get_file_paths, split_with_treesitter
 from code_index.database import init_client, get_collection, index_codebase, update_codebase
-from code_index.search import search_code
+from code_index.search import search_code, search_code_reranked
 from code_index.embedder import init_embedder, warm_up
 from code_index.path_security import validate_root_dir
 from code_index.config_loader import get_codebases_from_config, get_exclude_from_config, find_config_file
@@ -231,7 +231,7 @@ def serve(transport, host, port, quick):
             for name, table in tables_to_search:
                 if table.count_rows() == 0:
                     continue
-                result = search_code(query, table, n_results)
+                result = search_code_reranked(query, table, n_results)
                 for r in result["results"]:
                     r["_codebase"] = name
                 all_results.extend(result["results"])
@@ -239,7 +239,7 @@ def serve(transport, host, port, quick):
             if not all_results:
                 return "No indexed codebases found."
 
-            all_results.sort(key=lambda r: r["distance"])
+            all_results.sort(key=lambda r: r.get("relevance_score", 1 - r["distance"]), reverse=True)
             top = all_results[:n_results]
 
             log_search(query, codebase_name or "all", n_results, len(all_results))

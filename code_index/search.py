@@ -21,6 +21,17 @@ def search_code(query, table, n_results=3, hybrid=True):
     }
 
 
+def search_code_reranked(query, table, n_results=3, candidates_multiplier=20):
+    from code_index.embedder import rerank
+    candidates_count = n_results * candidates_multiplier
+    hybrid = search_code_hybrid(query, table, candidates_count)
+    if not hybrid["results"]:
+        return hybrid
+    reranked = rerank(query, hybrid["results"])
+    hybrid["results"] = reranked[:n_results]
+    return hybrid
+
+
 def _rrf_merge(vector_results, fts_results, k=60):
     scores = {}
     docs = {}
