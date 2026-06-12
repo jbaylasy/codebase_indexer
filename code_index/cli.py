@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import socket
 import sys
 import time
@@ -8,6 +9,7 @@ from datetime import datetime
 
 import click
 import uvicorn
+from dotenv import set_key
 from mcp.server.fastmcp import FastMCP
 
 from code_index.config import DB_PATH, EMBEDDING_CACHE_SIZE, PERIODIC_REINDEX_SECONDS, CODE_INDEX_API_KEY
@@ -196,6 +198,13 @@ Examples:
 @click.option("--quick", is_flag=True, help="Skip initial index, build in background")
 def serve(transport, host, port, quick):
     _startup()
+    global CODE_INDEX_API_KEY
+    if not CODE_INDEX_API_KEY:
+        CODE_INDEX_API_KEY = secrets.token_urlsafe(32)
+        try:
+            set_key(".env", "CODE_INDEX_API_KEY", CODE_INDEX_API_KEY)
+        except Exception:
+            pass
     _init_embedder()
     codebases = _resolve_codebases()
     exclude_dirs = get_exclude_from_config()
@@ -241,9 +250,8 @@ def serve(transport, host, port, quick):
         if lan_ip != "127.0.0.1":
             print(f"  LAN:       {lan_url}", file=sys.stderr)
         print(file=sys.stderr)
-        if not os.getenv("CODE_INDEX_API_KEY"):
-            print(f"  API Key:   {CODE_INDEX_API_KEY}", file=sys.stderr)
-            print(f"             (set CODE_INDEX_API_KEY in .env to pin it)", file=sys.stderr)
+        print(f"  API Key:   {CODE_INDEX_API_KEY}", file=sys.stderr)
+        print(f"             (auto-saved to .env, re-used on restart)", file=sys.stderr)
         print(file=sys.stderr)
         print("  Connect your AI agent:", file=sys.stderr)
         print(f"    claude mcp add code-index sse --url {loopback_url} --headers '{{\"Authorization\": \"Bearer {CODE_INDEX_API_KEY}\"}}'", file=sys.stderr)
