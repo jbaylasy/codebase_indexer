@@ -245,9 +245,9 @@ def serve(transport, host, port, quick):
             print(f"  LAN:       {lan_url}", file=sys.stderr)
         print(file=sys.stderr)
         if CODE_INDEX_API_KEY:
-            print(f"  API Key:   {CODE_INDEX_API_KEY}  (set CODE_INDEX_API_KEY in .env)", file=sys.stderr)
+            print(f"  API Key:   {CODE_INDEX_API_KEY}", file=sys.stderr)
         else:
-            print(f"  API Key:   (none — set CODE_INDEX_API_KEY in .env for remote access)", file=sys.stderr)
+            print(f"  API Key:   (none — set CODE_INDEX_API_KEY env var for remote access)", file=sys.stderr)
         print(file=sys.stderr)
         print("  Connect your AI agent:", file=sys.stderr)
         if CODE_INDEX_API_KEY:
