@@ -222,7 +222,7 @@ graph TD
 
 2. **Secret scanning** — Each chunk is scanned for 25+ regex patterns (AWS keys, JWTs, private keys, etc.) plus Shannon entropy checks. Matches are redacted before embedding.
 
-3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached. Batch size is configurable (`EMBEDDING_BATCH_SIZE`, default 64) — increase to 256 on Apple Silicon or high-end x86 for 2–4× throughput. Lower to 32 on low-memory machines.
+3. **Embedding** — Chunks are embedded using `sentence-transformers` with `all-MiniLM-L6-v2` (384-dim). The model is downloaded on first use and cached. Batch size defaults to 256; lower to 64 on low-memory machines.
 
 4. **Storage** — Vectors and metadata are stored in LanceDB with a full-text search (FTS) index over the chunk text.
 
@@ -398,7 +398,7 @@ exclude:
 | `CODE_INDEX_ALLOWED_DIRS` | (empty) | Restrict indexed paths (comma-separated). Empty = allow any non-sensitive path. |
 | `CODE_INDEX_AUDIT_DIR` | (disabled) | Directory for JSONL audit logs |
 | `CODE_INDEX_EMBEDDING_CACHE_SIZE` | `512` | LRU cache size for the embedder |
-| `CODE_INDEX_EMBEDDING_BATCH_SIZE` | `64` | Embedding batch size. Increase to 256 on Apple Silicon/high-end x86 for 2-4x throughput. Lower to 32 on low-memory machines. |
+ | `CODE_INDEX_EMBEDDING_BATCH_SIZE` | `256` | Embedding batch size. Lower to 64 on low-memory machines. Higher = faster on modern CPUs/Apple Silicon. |
 
 ---
 
