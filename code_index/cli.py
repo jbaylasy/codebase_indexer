@@ -15,7 +15,7 @@ from code_index.database import init_client, get_collection, index_codebase, upd
 from code_index.search import search_code
 from code_index.embedder import init_embedder, warm_up
 from code_index.path_security import validate_root_dir
-from code_index.config_loader import get_codebases_from_config, get_exclude_from_config
+from code_index.config_loader import get_codebases_from_config, get_exclude_from_config, find_config_file
 from code_index.config_setup import run_setup, quick_setup
 from code_index import watcher
 from code_index.query_sanitizer import sanitize_query, validate_codebase_name, validate_n_results
@@ -30,10 +30,19 @@ def _startup():
     print(f"[{ts}] code-index ready", file=sys.stderr)
 
 
+def _resolve_db_path():
+    if os.path.isabs(DB_PATH):
+        return DB_PATH
+    cfg = find_config_file()
+    if cfg:
+        return os.path.join(os.path.dirname(cfg), DB_PATH)
+    return DB_PATH
+
+
 def _get_db():
     global _db
     if _db is None:
-        _db = init_client(DB_PATH)
+        _db = init_client(_resolve_db_path())
     return _db
 
 
@@ -79,13 +88,14 @@ def _index_codebase(name, root, quick=False, exclude_dirs=None):
     root = validate_root_dir(root)
     tbl_name = _table_name(root)
     table = _get_table(tbl_name)
+    db_path = _resolve_db_path()
 
     if table.count_rows() == 0:
         if quick:
             print(f"[{name}] Quick mode — skipping initial index, building in background")
             from code_index.database import MerkleTree, _save_merkle_state
             merkle_tree = MerkleTree(root, exclude_dirs=exclude_dirs)
-            _save_merkle_state(DB_PATH, name, merkle_tree)
+            _save_merkle_state(db_path, name, merkle_tree)
             return table
         print(f"[{name}] Chunking files...")
         chunks = get_file_paths(root, exclude_dirs=exclude_dirs)
@@ -93,12 +103,12 @@ def _index_codebase(name, root, quick=False, exclude_dirs=None):
         print(f"[{ts}] [{name}] Full index: {len(chunks)} chunks from {root}")
         from code_index.database import MerkleTree
         merkle_tree = MerkleTree(root, exclude_dirs=exclude_dirs)
-        index_codebase(chunks, table, db_path=DB_PATH, codebase_name=name, merkle_tree=merkle_tree)
+        index_codebase(chunks, table, db_path=db_path, codebase_name=name, merkle_tree=merkle_tree)
     else:
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] [{name}] Checking for changes...")
         t0 = time.time()
-        update_codebase(root, table, split_with_treesitter, db_path=DB_PATH, codebase_name=name, exclude_dirs=exclude_dirs)
+        update_codebase(root, table, split_with_treesitter, db_path=db_path, codebase_name=name, exclude_dirs=exclude_dirs)
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] [{name}] Incremental update done ({table.count_rows()} chunks, {time.time() - t0:.1f}s)")
     return table
@@ -167,7 +177,7 @@ def serve(transport, host, port, quick):
 
     if watcher_codebases:
         watcher.start_watcher(watcher_codebases)
-        watcher.start_periodic_reindex(watcher_codebases, DB_PATH, exclude_dirs=exclude_dirs)
+        watcher.start_periodic_reindex(watcher_codebases, _resolve_db_path(), exclude_dirs=exclude_dirs)
 
     mcp_kwargs = {"name": "code_index"}
     if host:
@@ -314,7 +324,7 @@ def index_cmd():
         exclude_dirs = get_exclude_from_config()
         chunks = get_file_paths(root, exclude_dirs=exclude_dirs)
         print(f"[{cb['name']}] Indexing {len(chunks)} chunks from {root}")
-        index_codebase(chunks, table, db_path=DB_PATH, codebase_name=cb["name"])
+        index_codebase(chunks, table, db_path=_resolve_db_path(), codebase_name=cb["name"])
 
 
 @main.command(help="""
